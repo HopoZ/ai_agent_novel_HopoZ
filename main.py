@@ -1,53 +1,83 @@
-from crewai import Agent, Task, Crew
+import os
+from datetime import datetime
+from dotenv import load_dotenv
 
-# ====== 定义Agent ======
+# LangChain v1 核心组件
+from langchain.chat_models import init_chat_model
+from langchain.messages import HumanMessage, SystemMessage, AIMessage
 
-character_agent = Agent(
-    role="角色设计师",
-    goal="创建有深度的小说人物",
-    backstory="擅长构建复杂人物关系与性格",
-    verbose=True
-)
+# 【进化点】：从你分离出的模块中导入 LoreLoader
+from agents.loader import LoreLoader
 
-plot_agent = Agent(
-    role="剧情策划",
-    goal="设计精彩剧情",
-    backstory="擅长构建冲突与反转",
-    verbose=True
-)
+class WritingAgent:
+    def __init__(self):
+        load_dotenv()
+        # 1. 初始化模型
+        self.model = init_chat_model(
+            "deepseek-chat",
+            model_provider="openai",
+            api_key=os.getenv("DEEPSEEK_API_KEY"),
+            base_url="https://api.deepseek.com/v1",
+            temperature=0.8,
+            output_version="v1"
+        )
+        # 2. 实例化你分离出去的加载器
+        self.lore_loader = LoreLoader(data_path="data")
 
-writer_agent = Agent(
-    role="小说作家",
-    goal="写出高质量小说内容",
-    backstory="文笔细腻，擅长情绪表达",
-    verbose=True
-)
+    def parse_content(self, response: AIMessage) -> str:
+        """自动解读 v1 格式块，只提取纯文本正文"""
+        if isinstance(response.content, str):
+            return response.content
+        return "".join(
+            block.get("text", "")
+            for block in response.content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
 
-# ====== 定义任务 ======
+    def write(self, user_task: str):
+        # 3. 使用分离模块的功能：获取百科全书
+        lore_loader = LoreLoader()
+        lore_context = lore_loader.get_all_lore()
 
-character_task = Task(
-    description="设计一个玄幻男主和六位女主的人设",
-    agent=character_agent
-)
+        system_instruction = f"""你是一个顶尖的网文创作Agent。
+你的创作必须【严丝合缝】地符合以下百科设定的框架。
 
-plot_task = Task(
-    description="基于人物设定，生成故事大纲",
-    agent=plot_agent
-)
+{lore_context}
 
-write_task = Task(
-    description="根据大纲写第一章（2000字左右）",
-    agent=writer_agent
-)
+【创作指令】：
+- 直接开始正文叙述，不要任何废话。
+- 逻辑严密，必须符合百科中的等级、人物、怪物设定。
+"""
 
-# ====== 组队 ======
+        messages = [
+            SystemMessage(content=system_instruction),
+            HumanMessage(content=user_task)
+        ]
 
-crew = Crew(
-    agents=[character_agent, plot_agent, writer_agent],
-    tasks=[character_task, plot_task, write_task],
-    verbose=True
-)
+        print("Agent 正在加载百科设定...")
+        response = self.model.invoke(messages)
+        print(f"消耗总 Token: {response.usage_metadata.get('total_tokens')}")
 
-result = crew.kickoff()
+        return self.parse_content(response), response.usage_metadata
 
-print(result)
+
+# 执行主程序
+
+if __name__ == "__main__":
+    # 初始化 Agent
+    agent = WritingAgent()
+
+    # 设定具体创作任务
+    task = "描述依据百科全书创作的某一四千余字的章节"
+
+    # 执行并获取解析后的文本
+    content, usage = agent.write(task)
+
+    # 保存
+    output_file = f"outputs/novel_{datetime.now().strftime('%m%d_%H%M')}.txt"
+    os.makedirs("outputs", exist_ok=True)
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(content)
+
+    print(f"任务完成！设定已自动从 settings 目录同步。")
+    print(f"创作完成！结果已存至: {output_file}")
