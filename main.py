@@ -1,18 +1,14 @@
 import os
 from datetime import datetime
 from dotenv import load_dotenv
-
-# LangChain v1 核心组件
 from langchain.chat_models import init_chat_model
 from langchain.messages import HumanMessage, SystemMessage, AIMessage
-
-# 【进化点】：从你分离出的模块中导入 LoreLoader
 from agents.loader import LoreLoader
 
 class WritingAgent:
     def __init__(self):
         load_dotenv()
-        # 1. 初始化模型
+        # 初始化模型
         self.model = init_chat_model(
             "deepseek-chat",
             model_provider="openai",
@@ -21,7 +17,7 @@ class WritingAgent:
             temperature=0.8,
             output_version="v1"
         )
-        # 2. 实例化你分离出去的加载器
+        # 实例化分离出去的加载器
         self.lore_loader = LoreLoader(data_path="data")
 
     def parse_content(self, response: AIMessage) -> str:
@@ -35,7 +31,7 @@ class WritingAgent:
         )
 
     def write(self, user_task: str):
-        # 3. 使用分离模块的功能：获取百科全书
+        # 使用分离模块的功能：获取百科全书
         lore_loader = LoreLoader()
         lore_context = lore_loader.get_all_lore()
 
@@ -46,7 +42,7 @@ class WritingAgent:
 
 【创作指令】：
 - 直接开始正文叙述，不要任何废话。
-- 逻辑严密，必须符合百科中的等级、人物、怪物设定。
+- 逻辑严密，必须符合百科中的等级、人物、怪物设定背景。
 """
 
         messages = [
