@@ -1,4 +1,6 @@
-一个AI agent工作
+一个AI agent工作流，用于创建小说章节。
+
+也可以改造设定用于各种需要整体架构的地方。
 
 # 特点
 
@@ -14,7 +16,9 @@ pip install langchain
 pip install langchain-openai
 pip install python-dotenv
 ```
-# 根目录创建.env文件，填入`DEEPSEEK_API_KEY=<your_api_key>`
+# 根目录创建.env文件
+
+填入`DEEPSEEK_API_KEY=<your_api_key>`
 
 # DEEPSEEK_API_KEY购买网址
 

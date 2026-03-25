@@ -4,10 +4,13 @@ from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain.messages import HumanMessage, SystemMessage, AIMessage
 from agents.loader import LoreLoader
+import winsound
+
 
 class WritingAgent:
     def __init__(self):
         load_dotenv()
+
         # 初始化模型
         self.model = init_chat_model(
             "deepseek-chat",
@@ -17,6 +20,7 @@ class WritingAgent:
             temperature=0.8,
             output_version="v1"
         )
+
         # 实例化分离出去的加载器
         self.lore_loader = LoreLoader(data_path="data")
 
@@ -31,7 +35,7 @@ class WritingAgent:
         )
 
     def write(self, user_task: str):
-        # 使用分离模块的功能：获取百科全书
+        # 使用模块的功能：获取百科全书
         lore_loader = LoreLoader()
         lore_context = lore_loader.get_all_lore()
 
@@ -70,10 +74,11 @@ if __name__ == "__main__":
     content, usage = agent.write(task)
 
     # 保存
-    output_file = f"outputs/novel_{datetime.now().strftime('%m%d_%H%M')}.txt"
+    output_file = f"outputs/novel_{datetime.now().strftime('%m%d_%H%M%S')}.txt"
     os.makedirs("outputs", exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as f:
         f.write(content)
 
+    winsound.Beep(1000, 500)  # windows的语音库，提示任务完成
     print(f"任务完成！设定已自动从 settings 目录同步。")
     print(f"创作完成！结果已存至: {output_file}")
