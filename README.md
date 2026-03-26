@@ -5,7 +5,7 @@
 ## 亮点（Highlights）
 - **设定驱动（Lorebook-first）**：把设定 Markdown 放进 `settings/`，系统自动读取、分标签选择、注入提示词，避免“设定散落在对话里”导致的漂移
 - **长篇状态机（Stateful Writing Loop）**：人物 / 世界 / 时间线 / 连续性以 `NovelState` 持久化到 `storage/`，可持续迭代，不依赖一次性上下文
-- **流式写作（SSE）**：Web 端通过 `run_stream` 按阶段推送 planning/writing/saving，并实时输出正文增量（**不会被最终结果覆盖**）
+- **流式写作（SSE）**：Web 端通过 `run_stream` 按阶段推送 planning/writing/saving，并实时输出正文增量
 - **结构化输出与容错（Pydantic + Repair）**：对 LLM 的 JSON 输出做提取/修复/拆包兼容，并支持 `next_state` 以 **patch** 形式输出后合并，降低“长输出截断 → JSON 解析失败”的崩溃概率
 - **知识图谱（Graph API + ECharts）**：后端把人物/事件/势力映射为 nodes/edges，前端力导向图交互查看；支持 people/events/mixed 视图
 - **契约可回归（Contract Test）**：针对“区间插入语义（after/before）→ time_slot 推导”提供 pytest 用例，确保前后端契约不漂移
@@ -76,7 +76,13 @@ python -m uvicorn webapp.server:app --reload --port 8001
 - **可观测性**：SSE 输出阶段事件（planning/writing/saving/outputs_written/done/error），前端保留日志且不覆盖正文
 
 ## 截图
+
+cli端：
+
 ![](./images/Snipaste_2026-03-25_10-48-42.jpg)
+
+网页端：
+![](./images/网页端.jpg)
 
 ## 许可证与版权
 - **许可证**：AGPL-3.0-or-later（见 `LICENSE`）

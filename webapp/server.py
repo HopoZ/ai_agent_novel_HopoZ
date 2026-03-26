@@ -617,7 +617,9 @@ def list_novels():
 
 @app.get("/api/lore/tags")
 def get_lore_tags():
-    return {"tags": agent.lore_loader.get_lore_tags(), "count": len(agent.lore_loader.get_lore_tags())}
+    tags = agent.lore_loader.get_lore_tags()
+    groups = agent.lore_loader.get_lore_tag_groups()
+    return {"tags": tags, "groups": groups, "count": len(tags)}
 
 
 @app.get("/api/lore/preview")

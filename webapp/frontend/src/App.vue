@@ -2,9 +2,9 @@
   <div class="wrap">
     <h2 class="header">AI 小说创作代理（稳定写小说）</h2>
 
-    <el-row :gutter="16">
+    <div class="main-layout">
       <!-- 左：设定标签 -->
-      <el-col :span="6">
+      <div class="left-pane" :style="{ width: `${leftPanelWidth}px` }">
         <el-card class="panel" shadow="never">
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <div style="font-weight:600;">设定标签</div>
@@ -20,50 +20,68 @@
           </div>
 
           <div v-if="tagsLoading" style="color:#909399;">正在加载设定文件...</div>
-          <div v-else class="tag-list tag-list-scroll">
-            <div v-for="tag in tags" :key="tag" class="tag-item">
-              <el-popover
-                placement="right"
-                trigger="hover"
-                :open-delay="2000"
-                width="520"
-                popper-class="tag-popover"
-              >
-                <template #default>
-                  <div class="preview-scroll">
-                    <pre class="tag-preview" v-text="getTagPreview(tag)"></pre>
-                  </div>
-                </template>
-                <template #reference>
-                  <div style="display:flex; align-items:center; gap:8px;">
-                    <el-checkbox-button
-                      :checked="selectedTags.includes(tag)"
-                      @change="(v:any) => onTagChange(tag, v)"
+          <div v-else class="tag-list-scroll">
+            <el-tree
+              ref="tagTreeRef"
+              class="tag-tree"
+              node-key="id"
+              :data="tagTreeData"
+              :props="{ label: 'label', children: 'children' }"
+              show-checkbox
+              default-expand-all
+              @check="onTreeCheck"
+            >
+              <template #default="{ data }">
+                <div class="tree-node-row">
+                  <span class="tree-node-label">{{ data.label }}</span>
+                  <template v-if="data.isLeaf && data.tag">
+                    <el-popover
+                      placement="right"
+                      trigger="hover"
+                      :open-delay="2000"
+                      width="520"
+                      popper-class="tag-popover"
                     >
-                      {{ tag }}
-                    </el-checkbox-button>
+                      <template #default>
+                        <div class="preview-scroll">
+                          <pre class="tag-preview" v-text="getTagPreview(data.tag)"></pre>
+                        </div>
+                      </template>
+                      <template #reference>
+                        <el-button
+                          size="small"
+                          link
+                          type="primary"
+                          @click.stop
+                        >
+                          悬浮预览
+                        </el-button>
+                      </template>
+                    </el-popover>
                     <el-button
                       size="small"
                       link
                       type="primary"
-                      @click.stop.prevent="openTagDialog(tag)"
+                      @click.stop.prevent="openTagDialog(data.tag)"
                     >
-                      预览
+                      详情
                     </el-button>
-                  </div>
-                </template>
-              </el-popover>
-            </div>
+                  </template>
+                </div>
+              </template>
+            </el-tree>
           </div>
 
           <div class="tag-hint">
             建议至少勾选 1 项；不勾选会导致设定为空，可能无法生成状态/正文。
           </div>
         </el-card>
-      </el-col>
+      </div>
+
+      <div class="resize-handle" @mousedown="startResizeLeft" title="拖动调整左侧宽度"></div>
 
       <!-- 中：填写字段 -->
-      <el-col :span="8">
+      <div class="mid-pane">
         <el-card class="panel" shadow="never">
           <el-form label-position="top">
             <div style="font-weight:600;">已有小说</div>
@@ -175,10 +193,10 @@
             </el-form-item>
           </el-form>
         </el-card>
-      </el-col>
+      </div>
 
       <!-- 右：输出 -->
-      <el-col :span="10">
+      <div class="right-pane">
         <el-card shadow="never">
           <div style="display:flex; gap:8px; align-items:baseline; flex-wrap:wrap;">
             <div style="font-weight:600;">运行结果</div>
@@ -210,8 +228,8 @@
             </el-tab-pane>
           </el-tabs>
         </el-card>
-      </el-col>
-    </el-row>
+      </div>
+    </div>
   </div>
 
   <el-dialog v-model="dialogVisible" :title="dialogTitle" width="70%">
@@ -260,7 +278,9 @@ type Mode = "init_state" | "plan_only" | "write_chapter" | "revise_chapter";
 
 const tagsLoading = ref(true);
 const tags = ref<string[]>([]);
+const tagGroups = ref<Record<string, string[]>>({});
 const selectedTags = ref<string[]>([]);
+const tagTreeRef = ref<any>(null);
 const novelsLoading = ref(true);
 const novels = ref<Array<{ novel_id: string; novel_title: string }>>([]);
 const previewCache = reactive<Record<string, string>>({});
@@ -270,6 +290,12 @@ const anchors = ref<Array<{ id: string; label: string; type: string; time_slot: 
 
 const running = ref(false);
 const resultText = ref("等待你的操作...");
+const leftPanelWidth = ref(360);
+const LEFT_MIN_WIDTH = 280;
+const LEFT_MAX_WIDTH = 680;
+let resizingLeft = false;
+let resizeStartX = 0;
+let resizeStartW = 0;
 
 const rightTab = ref<"result" | "graph">("result");
 const graphView = ref<"people" | "events" | "mixed">("mixed");
@@ -335,9 +361,60 @@ const currentNovelTitle = computed(() => {
   return hit?.novel_title || "";
 });
 
+type TagTreeNode = { id: string; label: string; children?: TagTreeNode[]; isLeaf?: boolean; tag?: string };
+const tagTreeData = computed<TagTreeNode[]>(() => {
+  const roots: TagTreeNode[] = [];
+  const byId = new Map<string, TagTreeNode>();
+  for (const tag of tags.value) {
+    const parts = tag.split("/").filter(Boolean);
+    if (parts.length === 0) continue;
+    let parentId = "";
+    let parentChildren = roots;
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      const id = parentId ? `${parentId}/${part}` : part;
+      let node = byId.get(id);
+      if (!node) {
+        node = { id, label: part, children: [] };
+        byId.set(id, node);
+        parentChildren.push(node);
+      }
+      if (i === parts.length - 1) {
+        node.isLeaf = true;
+        node.tag = tag;
+      }
+      parentId = id;
+      parentChildren = node.children || (node.children = []);
+    }
+  }
+  return roots;
+});
+
 function logDebug(msg: string) {
   // 不在页面展示，仅输出到控制台便于排查
   console.log("[debug]", msg);
+}
+
+function onLeftResizeMove(e: MouseEvent) {
+  if (!resizingLeft) return;
+  const delta = e.clientX - resizeStartX;
+  const next = Math.max(LEFT_MIN_WIDTH, Math.min(LEFT_MAX_WIDTH, resizeStartW + delta));
+  leftPanelWidth.value = next;
+}
+
+function onLeftResizeUp() {
+  if (!resizingLeft) return;
+  resizingLeft = false;
+  window.removeEventListener("mousemove", onLeftResizeMove);
+  window.removeEventListener("mouseup", onLeftResizeUp);
+}
+
+function startResizeLeft(e: MouseEvent) {
+  resizingLeft = true;
+  resizeStartX = e.clientX;
+  resizeStartW = leftPanelWidth.value;
+  window.addEventListener("mousemove", onLeftResizeMove);
+  window.addEventListener("mouseup", onLeftResizeUp);
 }
 
 async function apiJson(url: string, method: string, body: any) {
@@ -409,30 +486,42 @@ async function apiSse(url: string, method: string, body: any, onEvent: (evt: { e
 
 function selectAll() {
   selectedTags.value = [...tags.value];
+  nextTick(() => {
+    if (tagTreeRef.value) tagTreeRef.value.setCheckedKeys([...tags.value], false);
+  });
 }
 function clearSelect() {
   selectedTags.value = [];
+  nextTick(() => {
+    if (tagTreeRef.value) tagTreeRef.value.setCheckedKeys([], false);
+  });
 }
 function invertSelect() {
   const set = new Set(selectedTags.value);
   selectedTags.value = tags.value.filter((t) => !set.has(t));
+  nextTick(() => {
+    if (tagTreeRef.value) tagTreeRef.value.setCheckedKeys([...selectedTags.value], false);
+  });
 }
-function onTagChange(tag: string, checked: any) {
-  const boolChecked = !!checked;
-  const set = new Set(selectedTags.value);
-  if (boolChecked) set.add(tag);
-  else set.delete(tag);
-  selectedTags.value = Array.from(set);
+function onTreeCheck() {
+  if (!tagTreeRef.value) return;
+  const checkedKeys: string[] = tagTreeRef.value.getCheckedKeys(false) || [];
+  const halfKeys: string[] = tagTreeRef.value.getHalfCheckedKeys() || [];
+  const all = [...checkedKeys, ...halfKeys];
+  selectedTags.value = all.filter((k) => tags.value.includes(k));
 }
 
 async function loadTags() {
   tagsLoading.value = true;
   const res = await apiJson("/api/lore/tags", "GET", null);
   tags.value = res.tags || [];
+  tagGroups.value = res.groups || {};
   selectedTags.value = [...tags.value];
   for (const k of Object.keys(previewCache)) delete previewCache[k];
   tagsLoading.value = false;
   logDebug(`Loaded tags count=${tags.value.length}`);
+  await nextTick();
+  if (tagTreeRef.value) tagTreeRef.value.setCheckedKeys([...selectedTags.value], false);
 }
 
 async function loadNovels() {
@@ -742,6 +831,7 @@ watch([rightTab, graphView, () => form.novelId], async ([tab]) => {
 });
 
 onBeforeUnmount(() => {
+  onLeftResizeUp();
   window.removeEventListener("resize", onResize);
   if (graphChart) {
     graphChart.dispose();
@@ -752,12 +842,51 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .wrap {
-  max-width: 1120px;
+  max-width: 1400px;
   margin: 0 auto;
 }
 .header {
   margin-top: 0;
   margin-bottom: 14px;
+}
+.main-layout {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+.left-pane {
+  flex: 0 0 auto;
+  min-width: 280px;
+}
+.mid-pane {
+  flex: 0 0 420px;
+  min-width: 360px;
+}
+.right-pane {
+  flex: 1 1 auto;
+  min-width: 420px;
+}
+.resize-handle {
+  width: 10px;
+  cursor: col-resize;
+  border-radius: 6px;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    transparent 38%,
+    #cbd5e1 38%,
+    #94a3b8 50%,
+    #cbd5e1 62%,
+    transparent 62%,
+    transparent 100%
+  );
+  transition: filter 0.2s, background-color 0.2s;
+  position: relative;
+  z-index: 10;
+  flex: 0 0 10px;
+}
+.resize-handle:hover {
+  filter: brightness(0.9);
 }
 .muted {
   color: #909399;
@@ -800,6 +929,21 @@ onBeforeUnmount(() => {
 }
 .tag-item {
   display: inline-flex;
+}
+.tag-tree {
+  font-size: 13px;
+}
+.tree-node-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tree-node-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tag-hint {
   margin-top: 6px;
