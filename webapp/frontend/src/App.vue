@@ -56,7 +56,6 @@
           :run-phase-label="runPhaseLabel"
           :run-hint="runHint"
           :token-usage-text="tokenUsageText"
-          :init-token-usage-text="initTokenUsageText"
           :last-output-path="lastOutputPath"
           :right-tab="rightTab"
           :graph-view="graphView"
@@ -66,7 +65,6 @@
           :result-text="resultText"
           :next-status-text="nextStatusText"
           :plan-stream-text="planStreamText"
-          :init-stream-text="initStreamText"
           :novel-id="form.novelId"
         />
       </div>
@@ -401,11 +399,9 @@ let runAbortController: AbortController | null = null;
 const resultText = ref("等待你的操作...");
 const nextStatusText = ref("");
 const planStreamText = ref("");
-const initStreamText = ref("");
-const runPhase = ref<"idle" | "planning" | "auto_init" | "writing" | "saving" | "outputs_written" | "done" | "error">("idle");
+const runPhase = ref<"idle" | "planning" | "writing" | "saving" | "outputs_written" | "done" | "error">("idle");
 const runHint = ref("");
 const lastOutputPath = ref("");
-const initTokenUsageText = ref("");
 const tokenUsageText = ref("");
 const leftPanelWidth = ref(360);
 const LEFT_MIN_WIDTH = 280;
@@ -420,10 +416,10 @@ let resizingMid = false;
 let midResizeStartX = 0;
 let midResizeStartW = 0;
 
-const rightTab = ref<"result" | "next" | "plan" | "init" | "graph">("result");
+const rightTab = ref<"result" | "next" | "plan" | "graph">("result");
 const graphView = ref<"people" | "events" | "mixed">("mixed");
 const graphFullscreenVisible = ref(false);
-function onRightTabChange(v: "result" | "next" | "plan" | "init" | "graph") {
+function onRightTabChange(v: "result" | "next" | "plan" | "graph") {
   rightTab.value = v;
 }
 function onGraphViewChange(v: "people" | "events" | "mixed") {
@@ -787,7 +783,6 @@ const runPhaseLabel = computed(() => {
   const p = runPhase.value;
   if (p === "idle") return "待命";
   if (p === "planning") return "正在规划章节";
-  if (p === "auto_init") return "正在自动初始化状态";
   if (p === "writing") return "正在生成正文";
   if (p === "saving") return "正在保存章节、状态与三表";
   if (p === "outputs_written") return "正文已写入 outputs";
@@ -1247,31 +1242,26 @@ async function executeRun(novelId: string, payload: any) {
   runPhase.value = "planning";
   runHint.value = "已提交任务，正在排队/规划...";
   lastOutputPath.value = "";
-  initTokenUsageText.value = "";
   tokenUsageText.value = "";
   nextStatusText.value = "";
   planStreamText.value = "";
-  initStreamText.value = "";
   try {
     // 流式输出：边生成边显示
     const startAt = Date.now();
     let logText = "（流式输出开始）\n";
-    let accInit = "";
     let accContent = "";
     let donePayload: any = null;
     const refreshStreamText = () => {
-      const initBlock = accInit ? `\n\n[init_state]\n${accInit}` : "";
-      resultText.value = `${logText}${initBlock}\n\n[content]\n${accContent}`;
+      resultText.value = `${logText}\n\n[content]\n${accContent}`;
     };
 
     await apiSse(`/api/novels/${novelId}/run_stream`, "POST", payload, (evt) => {
       if (evt.event === "phase") {
         const name = String(evt.data?.name || "running");
-        if (name === "planning" || name === "auto_init" || name === "writing" || name === "saving" || name === "outputs_written") {
+        if (name === "planning" || name === "writing" || name === "saving" || name === "outputs_written") {
           runPhase.value = name;
         }
         if (name === "planning") rightTab.value = "plan";
-        if (name === "auto_init") rightTab.value = "init";
         if (name === "writing") rightTab.value = "result";
         if (name === "next_status") rightTab.value = "next";
         const extra =
@@ -1279,26 +1269,11 @@ async function executeRun(novelId: string, payload: any) {
         const out =
           name === "outputs_written" && evt.data?.path ? ` path=${evt.data.path}` : "";
         if (name === "planning") runHint.value = "正在生成章节规划（beats + next_state）";
-        if (name === "auto_init") runHint.value = "检测到未初始化，正在自动初始化世界状态";
         if (name === "writing") runHint.value = "正在流式生成正文，请稍候...";
         if (name === "saving") runHint.value = "正在保存章节记录、世界状态和图谱三表";
         if (name === "next_status") runHint.value = "正在生成下章建议...";
         if (name === "next_status_done") runHint.value = "下章建议已生成";
         if (name === "next_status_failed") runHint.value = "下章建议生成失败（可重试）";
-        if (name === "auto_init" && evt.data?.usage_metadata) {
-          const u = evt.data.usage_metadata || {};
-          const input =
-            u.input_tokens ?? u.prompt_tokens ?? u.input_token_count ?? null;
-          const output =
-            u.output_tokens ?? u.completion_tokens ?? u.output_token_count ?? null;
-          const total =
-            u.total_tokens ?? u.total_token_count ??
-            ((typeof input === "number" && typeof output === "number") ? (input + output) : null);
-          if (input !== null || output !== null || total !== null) {
-            initTokenUsageText.value = `input=${input ?? "-"}, output=${output ?? "-"}, total=${total ?? "-"}`;
-            logText += `[usage:auto_init] ${initTokenUsageText.value}\n`;
-          }
-        }
         if (name === "outputs_written") {
           lastOutputPath.value = String(evt.data?.path || "");
           runHint.value = "正文已归档到 outputs，可在本地打开查看";
@@ -1314,12 +1289,6 @@ async function executeRun(novelId: string, payload: any) {
         const delta = evt.data?.delta || "";
         rightTab.value = "plan";
         planStreamText.value += delta;
-      } else if (evt.event === "init_content") {
-        const delta = evt.data?.delta || "";
-        rightTab.value = "init";
-        accInit += delta;
-        initStreamText.value = accInit;
-        refreshStreamText();
       } else if (evt.event === "content") {
         const delta = evt.data?.delta || "";
         rightTab.value = "result";
@@ -1387,11 +1356,14 @@ async function runMode() {
   const built = buildRunPayload();
   if (!built) return;
   previewingInput.value = true;
+  runPhase.value = "idle";
+  runHint.value = "正在生成本次 Input 预览...";
   try {
     const data = await apiJson(`/api/novels/${encodeURIComponent(built.novelId)}/preview_input`, "POST", built.payload);
     inputPreviewText.value = JSON.stringify(data, null, 2);
     pendingRunPayload.value = built.payload;
     pendingRunNovelId.value = built.novelId;
+    runHint.value = "Input 已生成，请在弹窗点击“确认并运行”";
     inputPreviewVisible.value = true;
   } finally {
     previewingInput.value = false;
@@ -1404,6 +1376,7 @@ async function confirmRunFromPreview() {
     return;
   }
   pendingRunStarting.value = true;
+  runHint.value = "已确认，准备开始运行...";
   inputPreviewVisible.value = false;
   try {
     await executeRun(pendingRunNovelId.value, pendingRunPayload.value);

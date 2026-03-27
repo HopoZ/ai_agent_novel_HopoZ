@@ -13,25 +13,19 @@
     <div v-if="tokenUsageText" class="output-path-tip">
       本次 Token：<code>{{ tokenUsageText }}</code>
     </div>
-    <div v-if="initTokenUsageText" class="output-path-tip">
-      初始化 Token：<code>{{ initTokenUsageText }}</code>
-    </div>
     <div v-if="lastOutputPath" class="output-path-tip">
       输出文件：<code>{{ lastOutputPath }}</code>
     </div>
     <el-divider></el-divider>
     <el-tabs :model-value="rightTab" @update:model-value="onRightTabChange" class="right-tabs">
       <el-tab-pane label="文本输出" name="result">
-        <pre class="result-pre" v-text="resultText"></pre>
+        <pre ref="resultPreRef" class="result-pre" v-text="resultText || (running ? '（进行中，等待正文输出...）' : '（本次运行暂无正文输出）')"></pre>
       </el-tab-pane>
       <el-tab-pane label="下章建议" name="next">
-        <pre class="result-pre" v-text="nextStatusText || '（本次运行暂无下章建议）'"></pre>
+        <pre ref="nextPreRef" class="result-pre" v-text="nextStatusText || (running ? '（生成中，完成后将展示下章建议）' : '（本次运行暂无下章建议）')"></pre>
       </el-tab-pane>
       <el-tab-pane label="规划流" name="plan">
-        <pre class="result-pre" v-text="planStreamText || '（本次运行暂无规划流输出）'"></pre>
-      </el-tab-pane>
-      <el-tab-pane label="初始化流" name="init">
-        <pre class="result-pre" v-text="initStreamText || '（本次运行未触发初始化流）'"></pre>
+        <pre ref="planPreRef" class="result-pre" v-text="planStreamText || (running ? '（进行中，等待规划流输出...）' : '（本次运行暂无规划流输出）')"></pre>
       </el-tab-pane>
       <el-tab-pane label="图谱可视化" name="graph">
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -48,25 +42,47 @@
 </template>
 
 <script lang="ts" setup>
-defineProps<{
+import { nextTick, ref, watch } from "vue";
+
+const props = defineProps<{
   running: boolean;
   runPhase: string;
   runPhaseLabel: string;
   runHint: string;
   tokenUsageText: string;
-  initTokenUsageText: string;
   lastOutputPath: string;
-  rightTab: "result" | "next" | "plan" | "init" | "graph";
+  rightTab: "result" | "next" | "plan" | "graph";
   graphView: "people" | "events" | "mixed";
   resultText: string;
   nextStatusText: string;
   planStreamText: string;
-  initStreamText: string;
   novelId: string;
-  onRightTabChange: (v: "result" | "next" | "plan" | "init" | "graph") => void;
+  onRightTabChange: (v: "result" | "next" | "plan" | "graph") => void;
   graphViewLabel: string;
   openGraphDialog: () => void;
 }>();
+
+const resultPreRef = ref<HTMLElement | null>(null);
+const nextPreRef = ref<HTMLElement | null>(null);
+const planPreRef = ref<HTMLElement | null>(null);
+
+async function scrollActiveOutputToBottom() {
+  await nextTick();
+  let el: HTMLElement | null = null;
+  if (props.rightTab === "result") el = resultPreRef.value;
+  if (props.rightTab === "next") el = nextPreRef.value;
+  if (props.rightTab === "plan") el = planPreRef.value;
+  if (!el) return;
+  el.scrollTop = el.scrollHeight;
+}
+
+watch(
+  () => [props.resultText, props.nextStatusText, props.planStreamText, props.rightTab],
+  () => {
+    void scrollActiveOutputToBottom();
+  },
+  { flush: "post" }
+);
 </script>
 
 <style scoped>
