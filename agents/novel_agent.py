@@ -129,6 +129,24 @@ class NovelAgent:
         # lore_summary_id 已废弃；按 tags + 单 tag 缓存读取 lorebook
         return build_lorebook(self.lore_loader, lore_tags=lore_tags)
 
+    def _pick_lore_tags_for_strict_mode(
+        self,
+        lore_tags: Optional[list[str]],
+        pov_character_ids_override: Optional[list[str]],
+        strict_no_supporting: bool,
+    ) -> Optional[list[str]]:
+        if (not strict_no_supporting) or (not lore_tags):
+            return lore_tags
+        povs = [str(x).strip() for x in (pov_character_ids_override or []) if str(x).strip()]
+        if not povs:
+            return lore_tags
+        picked: list[str] = []
+        for tag in lore_tags:
+            t = str(tag or "")
+            if any(pov in t for pov in povs):
+                picked.append(t)
+        return picked or lore_tags
+
     def build_lore_summary_llm(self, tags: list[str], force: bool = False) -> Dict[str, Any]:
         return build_lore_summary_llm_runtime(
             model=self._get_model(),
@@ -158,6 +176,8 @@ class NovelAgent:
         time_slot_hint: Optional[str] = None,
         pov_character_ids_override: Optional[list[str]] = None,
         supporting_character_ids: Optional[list[str]] = None,
+        minimal_context: bool = False,
+        strict_no_supporting: bool = False,
         timeline_n: int = 6,
         max_chars: int = 9000,
     ) -> str:
@@ -167,6 +187,8 @@ class NovelAgent:
             time_slot_hint=time_slot_hint,
             pov_character_ids_override=pov_character_ids_override,
             supporting_character_ids=supporting_character_ids,
+            minimal_context=minimal_context,
+            strict_no_supporting=strict_no_supporting,
             timeline_n=timeline_n,
             max_chars=max_chars,
         )
@@ -296,13 +318,21 @@ class NovelAgent:
         if not state.meta.initialized:
             raise ValueError("state 尚未初始化。请先用 mode=`init_state` 初始化。")
 
-        lorebook = self._lorebook(lore_tags or state.meta.lore_tags, lore_summary_id=lore_summary_id)
+        strict_no_supporting = bool(pov_character_ids_override) and not bool(supporting_character_ids)
+        picked_lore_tags = self._pick_lore_tags_for_strict_mode(
+            lore_tags=(lore_tags or state.meta.lore_tags),
+            pov_character_ids_override=pov_character_ids_override,
+            strict_no_supporting=strict_no_supporting,
+        )
+        lorebook = self._lorebook(picked_lore_tags, lore_summary_id=lore_summary_id)
         state_context = self._compact_state_for_prompt(
             state=state,
             user_task=user_task,
             time_slot_hint=time_slot_override,
             pov_character_ids_override=pov_character_ids_override,
             supporting_character_ids=supporting_character_ids,
+            minimal_context=(not include_chapter_context),
+            strict_no_supporting=strict_no_supporting,
         )
         chapter_context = self._neighbor_chapters_context(
             novel_id=novel_id,
@@ -323,6 +353,7 @@ class NovelAgent:
             state_context=state_context,
             chapter_context=chapter_context,
             lorebook=lorebook,
+            strict_no_supporting=strict_no_supporting,
         )
 
         return self._invoke_json(system, human, root_model=ChapterPlan)
@@ -347,13 +378,21 @@ class NovelAgent:
         if not state:
             raise ValueError(f"novel_id not found: {novel_id}")
 
-        lorebook = self._lorebook(lore_tags or state.meta.lore_tags, lore_summary_id=lore_summary_id)
+        strict_no_supporting = bool(pov_character_ids_override) and not bool(supporting_character_ids)
+        picked_lore_tags = self._pick_lore_tags_for_strict_mode(
+            lore_tags=(lore_tags or state.meta.lore_tags),
+            pov_character_ids_override=pov_character_ids_override,
+            strict_no_supporting=strict_no_supporting,
+        )
+        lorebook = self._lorebook(picked_lore_tags, lore_summary_id=lore_summary_id)
         state_context = self._compact_state_for_prompt(
             state=state,
             user_task=user_task,
             time_slot_hint=time_slot_hint,
             pov_character_ids_override=pov_character_ids_override,
             supporting_character_ids=supporting_character_ids,
+            minimal_context=(not include_chapter_context),
+            strict_no_supporting=strict_no_supporting,
         )
         chapter_context = self._neighbor_chapters_context(
             novel_id=novel_id,
@@ -367,6 +406,7 @@ class NovelAgent:
             chapter_context=chapter_context,
             lorebook=lorebook,
             plan=plan,
+            strict_no_supporting=strict_no_supporting,
         )
 
         messages = [SystemMessage(system), HumanMessage(human)]
@@ -398,13 +438,21 @@ class NovelAgent:
         if not state:
             raise ValueError(f"novel_id not found: {novel_id}")
 
-        lorebook = self._lorebook(lore_tags or state.meta.lore_tags, lore_summary_id=lore_summary_id)
+        strict_no_supporting = bool(pov_character_ids_override) and not bool(supporting_character_ids)
+        picked_lore_tags = self._pick_lore_tags_for_strict_mode(
+            lore_tags=(lore_tags or state.meta.lore_tags),
+            pov_character_ids_override=pov_character_ids_override,
+            strict_no_supporting=strict_no_supporting,
+        )
+        lorebook = self._lorebook(picked_lore_tags, lore_summary_id=lore_summary_id)
         state_context = self._compact_state_for_prompt(
             state=state,
             user_task=user_task,
             time_slot_hint=time_slot_hint,
             pov_character_ids_override=pov_character_ids_override,
             supporting_character_ids=supporting_character_ids,
+            minimal_context=(not include_chapter_context),
+            strict_no_supporting=strict_no_supporting,
         )
         chapter_context = self._neighbor_chapters_context(
             novel_id=novel_id,
@@ -418,6 +466,7 @@ class NovelAgent:
             chapter_context=chapter_context,
             lorebook=lorebook,
             plan=plan,
+            strict_no_supporting=strict_no_supporting,
         )
 
         messages = [SystemMessage(system), HumanMessage(human)]
@@ -620,13 +669,21 @@ class NovelAgent:
         if chapter_index is None:
             chapter_index = state.meta.current_chapter_index + 1
 
-        lorebook = self._lorebook(lore_tags or state.meta.lore_tags, lore_summary_id=lore_summary_id)
+        strict_no_supporting = bool(pov_character_ids_override) and not bool(supporting_character_ids)
+        picked_lore_tags = self._pick_lore_tags_for_strict_mode(
+            lore_tags=(lore_tags or state.meta.lore_tags),
+            pov_character_ids_override=pov_character_ids_override,
+            strict_no_supporting=strict_no_supporting,
+        )
+        lorebook = self._lorebook(picked_lore_tags, lore_summary_id=lore_summary_id)
         state_context = self._compact_state_for_prompt(
             state=state,
             user_task=user_task,
             time_slot_hint=time_slot_override,
             pov_character_ids_override=pov_character_ids_override,
             supporting_character_ids=supporting_character_ids,
+            minimal_context=manual_time_slot,
+            strict_no_supporting=strict_no_supporting,
         )
         chapter_context = self._neighbor_chapters_context(
             novel_id=novel_id,
@@ -645,6 +702,7 @@ class NovelAgent:
             state_context=state_context,
             chapter_context=chapter_context,
             lorebook=lorebook,
+            strict_no_supporting=strict_no_supporting,
         )
         out["stages"].append({"name": "plan_chapter", "system": plan_system, "human": plan_human})
 
@@ -655,6 +713,7 @@ class NovelAgent:
                 chapter_context=chapter_context,
                 lorebook=lorebook,
                 plan=None,
+                strict_no_supporting=strict_no_supporting,
             )
             out["stages"].append({"name": "write_chapter_text", "system": write_system, "human": write_human})
 

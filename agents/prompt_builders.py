@@ -40,10 +40,11 @@ def build_plan_chapter_prompt(
     state_context: str,
     chapter_context: str,
     lorebook: str,
+    strict_no_supporting: bool = False,
 ) -> tuple[str, str]:
     system = "你是一个“网文章节规划器”。你必须输出严格 JSON（只包含一个 JSON 对象），用于生成下一章。"
     human = (
-        f"用户本章任务：{user_task}\n\n"
+        f"用户本章提示：{user_task}\n\n"
         f"目标 chapter_index：{chapter_index}\n"
         f"连续性提示：{json.dumps(continuity_hint, ensure_ascii=False)}\n\n"
         "当前 NovelState（压缩注入）：\n"
@@ -62,10 +63,14 @@ def build_plan_chapter_prompt(
         "  - 必须包含 meta（沿用 novel_id/novel_title 等）与 continuity（更新到本章结束后的 time_slot/who_is_present/location/POV）\n"
         "  - characters：只需要输出本章涉及/变化的角色（其余角色不必重复输出）\n"
         "  - world：只需要输出本章新增/变化的部分（至少追加 1 条 timeline 事件，summary 简短）\n"
+        "  - world.timeline 每个事件对象必须严格包含字段：time_slot（字符串）、summary（字符串），"
+        "禁止使用 event_summary、desc、content 等别名\n"
         "  - recent_summaries：可选（0~1 条简短摘要）\n"
         "\n注意：next_state 的 continuity/time_slot 与 who_is_present 要是“本章结束后的状态”。\n"
         "严格要求：只输出 JSON 对象，不要 markdown，不要 ```json 代码块，不要额外解释。"
     )
+    if strict_no_supporting:
+        human += "\n补充约束：未指定 supporting_character_ids。"
     return system, human
 
 
@@ -75,11 +80,12 @@ def build_write_chapter_prompt(
     chapter_context: str,
     lorebook: str,
     plan: Optional[ChapterPlan] = None,
+    strict_no_supporting: bool = False,
 ) -> tuple[str, str]:
     system = (
         "你是一个网文作家。请根据当前 NovelState 与 ChapterPlan 生成章节正文。"
         "要求：必须严格遵守设定与连续性；不要提及自己是 AI；不要输出任何多余说明。"
-        "正文直接开始叙述。"
+        "正文直接开始叙述，至少4000字。"
     )
     plan_text = (
         plan.model_dump_json(ensure_ascii=False, indent=2)
@@ -87,7 +93,7 @@ def build_write_chapter_prompt(
         else "[运行时由上一步 plan_chapter 产出]"
     )
     human = (
-        f"用户本章任务：{user_task}\n\n"
+        f"用户本章提示：{user_task}\n\n"
         f"当前状态（压缩）：\n{state_context}\n\n"
         "上下文章节（仅相邻两章；若为空表示本次不注入章节 JSON）：\n"
         f"{chapter_context}\n\n"
@@ -97,5 +103,7 @@ def build_write_chapter_prompt(
         f"{lorebook}\n\n"
         "请输出纯文本章节正文（不要输出 JSON、不要输出标题前的解释）。"
     )
+    if strict_no_supporting:
+        human += "\n补充约束：未指定 supporting_character_ids，本章不要主动扩展知名配角出场。"
     return system, human
 

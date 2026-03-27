@@ -14,6 +14,7 @@ def select_related_character_ids(
     user_task: str,
     pov_character_ids_override: Optional[list[str]] = None,
     supporting_character_ids: Optional[list[str]] = None,
+    include_continuity_present: bool = True,
 ) -> Set[str]:
     ids = {c.character_id for c in (state.characters or []) if c.character_id}
     selected: Set[str] = set()
@@ -23,9 +24,10 @@ def select_related_character_ids(
     for x in (supporting_character_ids or []):
         if x in ids:
             selected.add(x)
-    for p in (state.continuity.who_is_present or []):
-        if p.character_id in ids:
-            selected.add(p.character_id)
+    if include_continuity_present:
+        for p in (state.continuity.who_is_present or []):
+            if p.character_id in ids:
+                selected.add(p.character_id)
     task = user_task or ""
     for cid in ids:
         if cid and (cid in task):
@@ -41,6 +43,8 @@ def compact_state_for_prompt(
     time_slot_hint: Optional[str] = None,
     pov_character_ids_override: Optional[list[str]] = None,
     supporting_character_ids: Optional[list[str]] = None,
+    minimal_context: bool = False,
+    strict_no_supporting: bool = False,
     timeline_n: int = 6,
     max_chars: int = 9000,
 ) -> str:
@@ -49,12 +53,13 @@ def compact_state_for_prompt(
         user_task=user_task,
         pov_character_ids_override=pov_character_ids_override,
         supporting_character_ids=supporting_character_ids,
+        include_continuity_present=(not minimal_context),
     )
     compact_chars = []
     for c in state.characters or []:
         if rel_ids and c.character_id not in rel_ids:
             continue
-        rel = list((c.relationships or {}).items())[:3]
+        rel = [] if strict_no_supporting else list((c.relationships or {}).items())[:3]
         compact_chars.append(
             {
                 "character_id": c.character_id,
@@ -78,8 +83,8 @@ def compact_state_for_prompt(
             picked_rules[k] = v
 
     timeline = list(state.world.timeline or [])
-    picked_tl = timeline[-max(1, timeline_n) :]
-    if time_slot_hint:
+    picked_tl = [] if minimal_context else timeline[-max(1, timeline_n) :]
+    if (not minimal_context) and time_slot_hint:
         for t in timeline:
             if time_slot_hint in (t.time_slot or "") and t not in picked_tl:
                 picked_tl.append(t)
@@ -92,9 +97,9 @@ def compact_state_for_prompt(
             "current_chapter_index": state.meta.current_chapter_index,
         },
         "continuity": {
-            "time_slot": state.continuity.time_slot,
+            "time_slot": (time_slot_hint or state.continuity.time_slot),
             "pov_character_id": state.continuity.pov_character_id,
-            "who_is_present": [p.model_dump() for p in (state.continuity.who_is_present or [])],
+            "who_is_present": [] if minimal_context else [p.model_dump() for p in (state.continuity.who_is_present or [])],
         },
         "characters": compact_chars,
         "world": {

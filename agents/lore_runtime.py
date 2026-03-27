@@ -87,8 +87,7 @@ def build_lore_summary_llm(
         )
         human = (
             f"标签：{tag}\n\n"
-            "要求：极致压缩，不用在意可读性，但对于你读取来说不丢失关键信息（人物关系、规则边界、触发条件、限制、关键事实）。\n"
-            "使用简洁条目输出。\n\n"
+            "要求：压缩，不用人类在意可读性，但对于你读取来说不丢失关键信息（尤其是专有名称）。\n"
             f"原文：\n{md}\n"
         )
         resp = model.invoke([SystemMessage(system), HumanMessage(human)])

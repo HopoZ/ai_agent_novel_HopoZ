@@ -357,13 +357,17 @@ def run_mode_stream(novel_id: str, req: RunModeRequest):
 
                 # 同步写出纯文本到 outputs/（保持脚本版的落盘习惯）
                 try:
-                    from agents.novel_agent import _write_outputs_txt
+                    from agents.text_utils import write_outputs_txt
 
                     title = (st.meta.novel_title or "未命名小说") if st else "未命名小说"
-                    out_path = _write_outputs_txt(title, chapter_index, content_text)
+                    out_path = write_outputs_txt(title, chapter_index, content_text)
                     yield _sse_pack("phase", {"name": "outputs_written", "path": out_path})
                 except Exception as e:
                     logger.warning("Failed to write outputs txt (stream): %s", e)
+                    yield _sse_pack(
+                        "phase",
+                        {"name": "outputs_write_failed", "error": str(e)},
+                    )
 
                 yield _sse_pack(
                     "done",
