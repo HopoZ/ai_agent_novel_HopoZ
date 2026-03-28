@@ -97,11 +97,9 @@ class GraphNodeCreateRequest(BaseModel):
     node_type: str  # character | timeline_event | faction
     character_id: Optional[str] = None
     description: Optional[str] = None
-    current_location: Optional[str] = None
     time_slot: Optional[str] = None
     summary: Optional[str] = None
     faction_name: Optional[str] = None
-    chapter_index: Optional[int] = None
 
 
 class GraphRelationshipRequest(BaseModel):

@@ -6,7 +6,7 @@ import json
 from typing import Dict, Optional, Set
 
 from agents._internal_marks import z7_module_mark
-from agents.persistence.graph_tables import parse_timeline_index_from_event_id, timeline_next_graph_neighbors
+from agents.persistence.graph_tables import timeline_index_for_node_id, timeline_next_graph_neighbors
 
 from .state_models import NovelState
 
@@ -69,7 +69,6 @@ def compact_state_for_prompt(
         compact_chars.append(
             {
                 "character_id": c.character_id,
-                "current_location": c.current_location,
                 "relationships": dict(rel),
                 "goals": (c.goals or [])[:2],
                 "known_facts": (c.known_facts or [])[:3],
@@ -94,17 +93,17 @@ def compact_state_for_prompt(
         used_focus_slice = False
         if novel_id and focus_timeline_event_id:
             fid = str(focus_timeline_event_id).strip()
-            fi = parse_timeline_index_from_event_id(fid)
+            fi = timeline_index_for_node_id(state, fid)
             if fi is not None and 0 <= fi < len(timeline):
                 used_focus_slice = True
                 preds, succs = timeline_next_graph_neighbors(novel_id, fid)
                 idx_set: Set[int] = {fi}
                 for pid in preds:
-                    j = parse_timeline_index_from_event_id(pid)
+                    j = timeline_index_for_node_id(state, pid)
                     if j is not None and 0 <= j < len(timeline):
                         idx_set.add(j)
                 for sid in succs:
-                    j = parse_timeline_index_from_event_id(sid)
+                    j = timeline_index_for_node_id(state, sid)
                     if j is not None and 0 <= j < len(timeline):
                         idx_set.add(j)
                 if len(idx_set) == 1:
@@ -149,8 +148,6 @@ def format_state_for_prompt(state: NovelState, max_chars: int = 12000) -> str:
         "characters": [
             {
                 "character_id": c.character_id,
-                "current_location": c.current_location,
-                "alive": c.alive,
                 "relationships": c.relationships,
                 "goals": c.goals,
                 "known_facts": c.known_facts,

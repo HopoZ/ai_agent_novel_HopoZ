@@ -49,29 +49,19 @@ const graph = inject(GRAPH_INJECTION_KEY) as GraphController;
         <el-form-item label="简介（可选）">
           <el-input v-model="graph.graphCreateCharDesc" type="textarea" :rows="3" />
         </el-form-item>
-        <el-form-item label="当前位置（可选）">
-          <el-input v-model="graph.graphCreateCharLoc" />
-        </el-form-item>
       </template>
       <template v-else-if="graph.graphCreateType === 'timeline_event'">
         <div class="muted" style="margin-bottom:12px; line-height:1.55;">
-          时间线是<strong>两层</strong>：<strong>①</strong> 每条事件的文案与可选章节绑定存在小说
-          <code>state.json</code> 的 <code>world.timeline</code>（本表单即写入这里）；
-          <strong>②</strong> 事件谁先谁后、如何跳转，由图谱关系真源
-          <code>event_relations.json</code> 里的 <code>timeline_next</code> 边表示。
-          新建后请<strong>在图谱中点开该节点</strong>，用「上一跳 / 下一跳」保存与前后事件的连接。
+          事件文案存在 <code>state.json</code> → <code>world.timeline</code>；先后顺序由
+          <code>event_relations.json</code> 的 <code>timeline_next</code> 边表示。
+          与章节的弱关联靠<strong>相同的 time_slot 文本</strong>（不再写章号）。
+          新建后请在图谱中点开该节点，用「上一跳 / 下一跳」连接前后事件。
         </div>
         <el-form-item label="time_slot" required>
           <el-input v-model="graph.graphCreateTlSlot" placeholder="例如：战争后期·反攻前夜" />
         </el-form-item>
         <el-form-item label="summary" required>
           <el-input v-model="graph.graphCreateTlSummary" type="textarea" :rows="3" placeholder="一句话概括该事件" />
-        </el-form-item>
-        <el-form-item label="绑定章节号 chapter_index（可选）">
-          <el-input v-model="graph.graphCreateTlChapterIndexStr" placeholder="留空不绑定；填正整数" />
-          <div class="muted" style="margin-top:6px;">
-            写入 <code>world.timeline[].chapter_index</code>，与已有章节号对齐时用于归属/检索；与 <code>timeline_next</code> 边无关。
-          </div>
         </el-form-item>
       </template>
       <template v-else>
@@ -164,24 +154,10 @@ const graph = inject(GRAPH_INJECTION_KEY) as GraphController;
         </el-form>
       </template>
       <template v-else-if="String(graph.graphEditEdge.type || '').toLowerCase() === 'chapter_belongs'">
-        <el-form label-position="top">
-          <el-form-item label="source（章节事件）">
-            <el-select v-model="graph.edgeSourceDraft" filterable placeholder="选择章节事件">
-              <el-option v-for="c in graph.graphChapterNodeIds" :key="`cb-s-${c}`" :label="c" :value="c" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="target（归属的时间线事件）">
-            <el-select v-model="graph.edgeTargetDraft" filterable clearable placeholder="选择时间线事件（可清空表示取消归属）">
-              <el-option label="（取消归属）" value="" />
-              <el-option v-for="t in graph.graphTimelineOptions" :key="`cb-t-${t.id}`" :label="t.label" :value="t.id" />
-            </el-select>
-          </el-form-item>
-          <div style="display:flex; gap:8px;">
-            <el-button type="primary" @click="graph.saveEdgeRelationship">保存归属</el-button>
-            <el-button type="danger" plain @click="graph.deleteEdgeRelationship">删除当前边</el-button>
-          </div>
-          <div class="muted" style="margin-top:8px;">提示：章节归属会写回时间线事件的 chapter_index，并同步三表。</div>
-        </el-form>
+        <div class="muted" style="line-height:1.6;">
+          此类边由系统根据章节与时间线的 <strong>time_slot</strong> 文本是否一致自动画出，不再支持在图谱里按章号绑定。
+          需要调整时，请编辑对应章节节点或时间线节点的 <code>time_slot</code>。
+        </div>
       </template>
       <template v-else>
         <div class="muted">该类型边暂不支持修改（可修改 relationship 边）。</div>
@@ -195,9 +171,6 @@ const graph = inject(GRAPH_INJECTION_KEY) as GraphController;
         <el-form label-position="top">
           <el-form-item label="description">
             <el-input v-model="graph.graphCharDesc" type="textarea" :rows="3" />
-          </el-form-item>
-          <el-form-item label="current_location">
-            <el-input v-model="graph.graphCharLoc" />
           </el-form-item>
           <el-form-item label="goals（每行一条）">
             <el-input v-model="graph.graphCharGoals" type="textarea" :rows="4" />
@@ -278,7 +251,7 @@ const graph = inject(GRAPH_INJECTION_KEY) as GraphController;
             <el-button type="danger" plain @click="graph.deleteCurrentGraphNode" :disabled="!novelId">删除节点</el-button>
           </div>
           <div class="muted" style="margin-top:10px;">
-            删除时间线事件会重排后续 ev:timeline 下标，并清理指向该点的时间推进边。
+            删除时间线事件会移除该事件的稳定 id，并清理所有以该 id 为端点的关系边；其余事件 id 不变。
           </div>
         </el-form>
       </template>

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import shutil
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from agents.persistence.storage import get_chapters_dir, list_chapters, load_state, save_chapter, save_state
+from agents.persistence.storage import get_chapters_dir, get_state_path, list_chapters, load_state, save_chapter, save_state
 from agents.state.state_models import ChapterRecord, NovelState
 
 
@@ -32,6 +33,116 @@ def _event_entities_path(novel_id: str) -> Path:
 
 def _event_relations_path(novel_id: str) -> Path:
     return _novel_dir(novel_id) / "event_relations.json"
+
+
+def new_timeline_event_id() -> str:
+    return f"ev:timeline:{uuid.uuid4().hex}"
+
+
+def timeline_index_for_node_id(state: NovelState, node_id: Optional[str]) -> Optional[int]:
+    """时间线节点 → 列表下标：支持稳定 id（ev:timeline:{hex}）或兼容旧请求的纯数字下标。"""
+    nid = (node_id or "").strip()
+    if not nid.startswith("ev:timeline:"):
+        return None
+    rest = nid.split("ev:timeline:", 1)[1].strip()
+    tl = list(state.world.timeline or [])
+    if rest.isdigit():
+        j = int(rest)
+        if 0 <= j < len(tl):
+            return j
+        return None
+    for i, ev in enumerate(tl):
+        eid = (ev.event_id or "").strip()
+        if eid and eid == nid:
+            return i
+    return None
+
+
+def ensure_timeline_stable_ids(novel_id: str, state: NovelState) -> None:
+    """
+    为每条 timeline 分配稳定 event_id，并把 event_relations / event_entities 里
+    旧的 ev:timeline:{下标} 端点改写为稳定 id。不调用 ensure_graph_tables，避免与 load_state 递归。
+    """
+    tl = list(state.world.timeline or [])
+    if not tl:
+        return
+
+    changed_state = any(not (ev.event_id and str(ev.event_id).strip()) for ev in tl)
+    if changed_state:
+        for ev in tl:
+            if not (ev.event_id and str(ev.event_id).strip()):
+                ev.event_id = new_timeline_event_id()
+
+    idx_to_id = {i: (tl[i].event_id or "").strip() for i in range(len(tl))}
+
+    def map_node(nid: str) -> str:
+        s = (nid or "").strip()
+        if not s.startswith("ev:timeline:"):
+            return s
+        rest = s.split("ev:timeline:", 1)[1].strip()
+        if rest.isdigit():
+            j = int(rest)
+            if 0 <= j < len(tl) and idx_to_id.get(j):
+                return idx_to_id[j]
+        return s
+
+    er_path = _event_relations_path(novel_id)
+    ee_path = _event_entities_path(novel_id)
+    need_remap = changed_state
+    rel_rows: Optional[List[Dict[str, Any]]] = None
+    er_data: Optional[Dict[str, Any]] = None
+    if er_path.exists():
+        try:
+            er_data = json.loads(er_path.read_text(encoding="utf-8"))
+            rel_rows = list(er_data.get("relations") or [])
+        except Exception:
+            rel_rows = None
+    if rel_rows is not None and not need_remap:
+        for r in rel_rows:
+            for k in ("source", "target"):
+                v = str(r.get(k, "") or "").strip()
+                if v.startswith("ev:timeline:"):
+                    rest = v.split("ev:timeline:", 1)[1].strip()
+                    if rest.isdigit():
+                        need_remap = True
+                        break
+            if need_remap:
+                break
+
+    wrote = False
+    if need_remap and rel_rows is not None and er_data is not None:
+        new_rel = []
+        for r in rel_rows:
+            ns = map_node(str(r.get("source", "") or ""))
+            nt = map_node(str(r.get("target", "") or ""))
+            new_rel.append({**r, "source": ns, "target": nt})
+        er_data["relations"] = new_rel
+        er_data["updated_at"] = datetime.utcnow().isoformat()
+        er_path.parent.mkdir(parents=True, exist_ok=True)
+        er_path.write_text(json.dumps(er_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        wrote = True
+
+    if need_remap and ee_path.exists():
+        try:
+            ee_raw = json.loads(ee_path.read_text(encoding="utf-8"))
+            events = list(ee_raw.get("events") or [])
+            touched = False
+            for row in events:
+                old = str(row.get("event_id", "") or "").strip()
+                neu = map_node(old)
+                if neu != old:
+                    row["event_id"] = neu
+                    touched = True
+            if touched:
+                ee_raw["events"] = events
+                ee_raw["updated_at"] = datetime.utcnow().isoformat()
+                ee_path.write_text(json.dumps(ee_raw, ensure_ascii=False, indent=2), encoding="utf-8")
+                wrote = True
+        except Exception:
+            pass
+
+    if changed_state or wrote:
+        save_state(novel_id, state)
 
 
 def ensure_graph_tables(novel_id: str) -> None:
@@ -108,8 +219,8 @@ def ensure_graph_tables(novel_id: str) -> None:
     if ce_path.exists() and cpath.exists() and ee_path.exists() and epath.exists():
         return
 
-    state = load_state(novel_id)
-    if not state:
+    sp = get_state_path(novel_id)
+    if not sp.exists():
         if not ce_path.exists():
             ce_path.write_text(json.dumps({"characters": [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
         if not cpath.exists():
@@ -120,6 +231,21 @@ def ensure_graph_tables(novel_id: str) -> None:
             epath.write_text(json.dumps({"relations": [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
         return
 
+    try:
+        state = NovelState.model_validate(json.loads(sp.read_text(encoding="utf-8")))
+    except Exception:
+        if not ce_path.exists():
+            ce_path.write_text(json.dumps({"characters": [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
+        if not cpath.exists():
+            cpath.write_text(json.dumps({"relations": [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
+        if not ee_path.exists():
+            ee_path.write_text(json.dumps({"events": [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
+        if not epath.exists():
+            epath.write_text(json.dumps({"relations": [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
+        return
+
+    ensure_timeline_stable_ids(novel_id, state)
+
     char_entities: List[Dict[str, Any]] = []
     char_relations: List[Dict[str, Any]] = []
     for c in state.characters or []:
@@ -127,8 +253,6 @@ def ensure_graph_tables(novel_id: str) -> None:
             {
                 "character_id": c.character_id,
                 "description": c.description,
-                "current_location": c.current_location,
-                "alive": c.alive,
                 "goals": list(c.goals or []),
                 "known_facts": list(c.known_facts or []),
             }
@@ -149,20 +273,26 @@ def ensure_graph_tables(novel_id: str) -> None:
     event_rows: List[Dict[str, Any]] = []
     event_relations: List[Dict[str, Any]] = []
     timeline = list(state.world.timeline or [])
-    for idx, ev in enumerate(timeline):
+    for ev in timeline:
+        eid = (ev.event_id or "").strip() or new_timeline_event_id()
+        if not (ev.event_id and str(ev.event_id).strip()):
+            ev.event_id = eid
         event_rows.append(
             {
-                "event_id": f"ev:timeline:{idx}",
+                "event_id": eid,
                 "time_slot": str(ev.time_slot or "").strip(),
                 "summary": str(ev.summary or "").strip(),
-                "chapter_index": ev.chapter_index,
             }
         )
     for idx in range(0, max(0, len(timeline) - 1)):
+        a = (timeline[idx].event_id or "").strip()
+        b = (timeline[idx + 1].event_id or "").strip()
+        if not a or not b:
+            continue
         event_relations.append(
             {
-                "source": f"ev:timeline:{idx}",
-                "target": f"ev:timeline:{idx+1}",
+                "source": a,
+                "target": b,
                 "label": "时间推进",
                 "kind": "timeline_next",
             }
@@ -197,6 +327,7 @@ def ensure_graph_tables(novel_id: str) -> None:
         json.dumps({"relations": event_relations, "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    save_state(novel_id, state)
 
 
 def load_character_relations(novel_id: str) -> List[Dict[str, Any]]:
@@ -272,114 +403,75 @@ def save_event_relations(novel_id: str, rows: List[Dict[str, Any]]) -> None:
 
 
 def sync_timeline_event_entity_rows(novel_id: str, state: NovelState) -> None:
-    """事件实体表与 state.world.timeline 下标对齐。"""
+    """事件实体表与 state.world.timeline 对齐（每行 event_id 为稳定 id）。"""
     ensure_graph_tables(novel_id)
+    ensure_timeline_stable_ids(novel_id, state)
     save_event_rows(
         novel_id,
         [
             {
-                "event_id": f"ev:timeline:{i}",
+                "event_id": (ev.event_id or ""),
                 "time_slot": str(ev.time_slot or "").strip(),
                 "summary": str(ev.summary or "").strip(),
-                "chapter_index": ev.chapter_index,
             }
-            for i, ev in enumerate(state.world.timeline or [])
+            for ev in (state.world.timeline or [])
         ],
     )
-
-
-def remap_timeline_numeric_edges_after_delete(rows: List[Dict[str, Any]], deleted_idx: int) -> List[Dict[str, Any]]:
-    """
-    删除 timeline[deleted_idx] 后重写事件关系表中 ev:timeline:{n}：
-    n == deleted_idx 的端点所在行删除；n > deleted_idx 变为 n-1；草稿 id（非纯数字）不变。
-    """
-
-    def map_node(nid: str) -> Optional[str]:
-        if not nid.startswith("ev:timeline:"):
-            return nid
-        rest = nid.split("ev:timeline:", 1)[1].strip()
-        if not rest.isdigit():
-            return nid
-        n = int(rest)
-        if n == deleted_idx:
-            return None
-        if n > deleted_idx:
-            return f"ev:timeline:{n - 1}"
-        return nid
-
-    out: List[Dict[str, Any]] = []
-    for r in rows:
-        src = str(r.get("source", "") or "").strip()
-        tgt = str(r.get("target", "") or "").strip()
-        ns = map_node(src) if src.startswith("ev:timeline:") else src
-        nt = map_node(tgt) if tgt.startswith("ev:timeline:") else tgt
-        if ns is None or nt is None:
-            continue
-        out.append({**r, "source": ns, "target": nt})
-    return out
-
-
-def parse_timeline_index_from_event_id(event_id: str) -> Optional[int]:
-    """解析 ev:timeline:{int}；草稿 id（非纯数字后缀）返回 None。"""
-    raw = str(event_id or "").strip()
-    if not raw.startswith("ev:timeline:"):
-        return None
-    rest = raw.split("ev:timeline:", 1)[1].strip()
-    try:
-        return int(rest)
-    except ValueError:
-        return None
 
 
 def timeline_next_graph_neighbors(novel_id: str, focus_event_id: str) -> Tuple[List[str], List[str]]:
     """
     基于 event_relations 中 kind=timeline_next 的边：
-    - 前置：target == focus 的 source（合法 ev:timeline 索引节点）
-    - 后置：source == focus 的 target（合法 ev:timeline 索引节点）
-    保持首次遍历顺序，不去重跨类重复（同一 id 只出现一次于各自列表内）。
+    端点为稳定 ev:timeline:{hex}（或兼容旧数据中带纯数字下标的 id）。
     """
+    st = load_state(novel_id)
+    tl_ids: set[str] = set()
+    if st:
+        for ev in st.world.timeline or []:
+            eid = (ev.event_id or "").strip()
+            if eid:
+                tl_ids.add(eid)
     focus = str(focus_event_id or "").strip()
     preds: List[str] = []
     succs: List[str] = []
     seen_p: set[str] = set()
     seen_s: set[str] = set()
+
+    def _is_timeline_node(nid: str) -> bool:
+        if not nid.startswith("ev:timeline:"):
+            return False
+        rest = nid.split("ev:timeline:", 1)[1].strip()
+        if rest.isdigit():
+            return True
+        return nid in tl_ids
+
     for r in load_event_relations(novel_id):
         if str(r.get("kind", "")).strip().lower() != "timeline_next":
             continue
         src = str(r.get("source", "")).strip()
         tgt = str(r.get("target", "")).strip()
         if src == focus and tgt:
-            if parse_timeline_index_from_event_id(tgt) is not None and tgt not in seen_s:
+            if _is_timeline_node(tgt) and tgt not in seen_s:
                 seen_s.add(tgt)
                 succs.append(tgt)
         if tgt == focus and src:
-            if parse_timeline_index_from_event_id(src) is not None and src not in seen_p:
+            if _is_timeline_node(src) and src not in seen_p:
                 seen_p.add(src)
                 preds.append(src)
     return preds, succs
 
 
-def resolve_chapter_event_ids(state: NovelState, chapter_index: int, time_slot: str) -> List[str]:
-    """
-    章节归属事件：
-    1) 优先匹配 timeline.chapter_index == chapter_index
-    2) 次优匹配 timeline.time_slot == chapter.time_slot
-    3) 无匹配则返回空（由上层决定是否兜底）
-    """
-    timeline = list(state.world.timeline or [])
-    by_index: List[str] = []
-    for i, ev in enumerate(timeline):
-        if ev.chapter_index == chapter_index:
-            by_index.append(f"ev:timeline:{i}")
-    if by_index:
-        return by_index
-
+def resolve_chapter_event_ids(state: NovelState, time_slot: str) -> List[str]:
+    """与章节写作对齐的时间线事件：仅按 time_slot 与 timeline 项匹配（不再使用章号绑定）。"""
     ts = str(time_slot or "").strip()
-    if ts:
-        by_slot = [f"ev:timeline:{i}" for i, ev in enumerate(timeline) if str(ev.time_slot or "").strip() == ts]
-        if by_slot:
-            return by_slot
-    return []
+    if not ts:
+        return []
+    timeline = list(state.world.timeline or [])
+    return [
+        str(ev.event_id).strip()
+        for ev in timeline
+        if str(ev.time_slot or "").strip() == ts and (ev.event_id or "").strip()
+    ]
 
 
 def replace_appear_edges_for_chapter(novel_id: str, chapter: ChapterRecord) -> None:
@@ -408,21 +500,14 @@ def replace_timeline_next_edges_from_state(novel_id: str, state: NovelState) -> 
     """
     根据 state.world.timeline 同步 timeline_next 事件关系边：
     - 保留已有手工边（含空 target 的“待定”草稿）
-    - 仅为缺失下跳的节点补默认顺序边 i -> i+1
-    - 清理越界 source/target（timeline 缩短后的脏边）
+    - 仅为缺失下跳的节点补默认顺序边（按列表顺序，稳定 id 端点）
+    - 清理指向已不存在 timeline 节点的边
     """
+    ensure_timeline_stable_ids(novel_id, state)
     rows = load_event_relations(novel_id)
     timeline = list(state.world.timeline or [])
     timeline_len = len(timeline)
-
-    def _timeline_idx(node_id: str) -> Optional[int]:
-        raw = str(node_id or "").strip()
-        if not raw.startswith("ev:timeline:"):
-            return None
-        try:
-            return int(raw.split("ev:timeline:", 1)[1].strip())
-        except Exception:
-            return None
+    valid: set[str] = {(ev.event_id or "").strip() for ev in timeline if (ev.event_id or "").strip()}
 
     kept_timeline_rows: List[Dict[str, Any]] = []
     other_rows: List[Dict[str, Any]] = []
@@ -435,14 +520,10 @@ def replace_timeline_next_edges_from_state(novel_id: str, state: NovelState) -> 
 
         src = str(r.get("source", "")).strip()
         tgt = str(r.get("target", "")).strip()
-        src_idx = _timeline_idx(src)
-        tgt_idx = _timeline_idx(tgt) if tgt else None
 
-        # source 必须是有效 timeline 节点；无 source 的草稿不保留
-        if src_idx is None or not (0 <= src_idx < timeline_len):
+        if src not in valid:
             continue
 
-        # 空 target 视为“待定”草稿，保留
         if tgt == "":
             if src in used_sources:
                 continue
@@ -457,8 +538,7 @@ def replace_timeline_next_edges_from_state(novel_id: str, state: NovelState) -> 
             )
             continue
 
-        # 非空 target 必须有效
-        if tgt_idx is None or not (0 <= tgt_idx < timeline_len):
+        if tgt not in valid:
             continue
         if src in used_sources:
             continue
@@ -472,15 +552,17 @@ def replace_timeline_next_edges_from_state(novel_id: str, state: NovelState) -> 
             }
         )
 
-    # 为没有下跳定义的节点补默认顺序边
     for idx in range(0, max(0, timeline_len - 1)):
-        src = f"ev:timeline:{idx}"
-        if src in used_sources:
+        a = (timeline[idx].event_id or "").strip()
+        b = (timeline[idx + 1].event_id or "").strip()
+        if not a or not b:
+            continue
+        if a in used_sources:
             continue
         kept_timeline_rows.append(
             {
-                "source": src,
-                "target": f"ev:timeline:{idx+1}",
+                "source": a,
+                "target": b,
                 "label": "时间推进",
                 "kind": "timeline_next",
             }
@@ -516,24 +598,22 @@ def persist_chapter_artifacts(
             {
                 "character_id": c.character_id,
                 "description": c.description,
-                "current_location": c.current_location,
-                "alive": c.alive,
                 "goals": list(c.goals or []),
                 "known_facts": list(c.known_facts or []),
             }
             for c in (next_state.characters or [])
         ],
     )
+    ensure_timeline_stable_ids(novel_id, next_state)
     save_event_rows(
         novel_id,
         [
             {
-                "event_id": f"ev:timeline:{i}",
+                "event_id": (ev.event_id or ""),
                 "time_slot": str(ev.time_slot or "").strip(),
                 "summary": str(ev.summary or "").strip(),
-                "chapter_index": ev.chapter_index,
             }
-            for i, ev in enumerate(next_state.world.timeline or [])
+            for ev in (next_state.world.timeline or [])
         ],
     )
     replace_appear_edges_for_chapter(novel_id, chapter)

@@ -85,7 +85,6 @@ def merge_state(base: NovelState, patch: NovelState) -> NovelState:
             time_slot=pc.time_slot or mc.time_slot,
             who_is_present=pc.who_is_present or mc.who_is_present,
             pov_character_id=pc.pov_character_id or mc.pov_character_id,
-            current_location=pc.current_location or mc.current_location,
         )
 
     # characters

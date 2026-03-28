@@ -125,10 +125,13 @@ def list_event_anchors(novel_id: str):
         raise HTTPException(status_code=404, detail="novel not found")
 
     anchors: List[Dict[str, Any]] = []
-    for idx, ev in enumerate(state.world.timeline or []):
+    for ev in state.world.timeline or []:
+        eid = (ev.event_id or "").strip()
+        if not eid:
+            continue
         anchors.append(
             {
-                "id": f"ev:timeline:{idx}",
+                "id": eid,
                 "type": "timeline_event",
                 "label": f"{ev.time_slot}：{ev.summary}",
                 "time_slot": ev.time_slot,

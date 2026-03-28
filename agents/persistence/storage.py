@@ -68,6 +68,14 @@ def load_state(novel_id: str) -> Optional[NovelState]:
     # 每次 load 都按最新章节“重算运行态关键字段”，避免一直沿用旧 state 快照。
     chapters = list_chapters(novel_id)
     if not chapters:
+        if state is not None:
+            from agents.persistence.graph_tables import ensure_timeline_stable_ids
+
+            ensure_timeline_stable_ids(novel_id, state)
+            try:
+                save_state(novel_id, state)
+            except Exception:
+                pass
         return state
 
     latest = max(chapters, key=lambda c: (c.chapter_index, c.created_at))
@@ -93,6 +101,11 @@ def load_state(novel_id: str) -> Optional[NovelState]:
         state.continuity.time_slot = str(latest.time_slot or state.continuity.time_slot or "未设置")
         state.continuity.pov_character_id = latest.pov_character_id or state.continuity.pov_character_id
         state.continuity.who_is_present = latest.who_is_present or []
+
+    if state is not None:
+        from agents.persistence.graph_tables import ensure_timeline_stable_ids
+
+        ensure_timeline_stable_ids(novel_id, state)
 
     # 回写一次，让 state.json 始终是“本次加载后”的最新运行态。
     try:

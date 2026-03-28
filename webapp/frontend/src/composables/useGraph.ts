@@ -27,7 +27,6 @@ export function useGraph(novelId: Ref<string>) {
   const graphEditNode = ref<Record<string, unknown> | null>(null);
   const graphEditEdge = ref<Record<string, unknown> | null>(null);
   const graphCharDesc = ref("");
-  const graphCharLoc = ref("");
   const graphCharGoals = ref("");
   const graphCharFacts = ref("");
   const graphFacDesc = ref("");
@@ -46,10 +45,8 @@ export function useGraph(novelId: Ref<string>) {
   const graphCreateType = ref<"character" | "timeline_event" | "faction">("timeline_event");
   const graphCreateCharId = ref("");
   const graphCreateCharDesc = ref("");
-  const graphCreateCharLoc = ref("");
   const graphCreateTlSlot = ref("");
   const graphCreateTlSummary = ref("");
-  const graphCreateTlChapterIndexStr = ref("");
   const graphCreateFacName = ref("");
   const graphCreateFacDesc = ref("");
 
@@ -112,7 +109,6 @@ export function useGraph(novelId: Ref<string>) {
     const nodeType = String(node?.type || "");
     if (nodeType === "character") {
       graphCharDesc.value = String(data?.description || "");
-      graphCharLoc.value = String(data?.current_location || "");
       graphCharGoals.value = Array.isArray(data?.goals)
         ? (data.goals as unknown[]).join("\n")
         : String(data?.goals || "");
@@ -191,7 +187,6 @@ export function useGraph(novelId: Ref<string>) {
     if (nodeType === "character") {
       patch = {
         description: graphCharDesc.value,
-        current_location: graphCharLoc.value,
         goals: graphCharGoals.value,
         known_facts: graphCharFacts.value,
       };
@@ -299,10 +294,8 @@ export function useGraph(novelId: Ref<string>) {
   function resetGraphCreateForm() {
     graphCreateCharId.value = "";
     graphCreateCharDesc.value = "";
-    graphCreateCharLoc.value = "";
     graphCreateTlSlot.value = "";
     graphCreateTlSummary.value = "";
-    graphCreateTlChapterIndexStr.value = "";
     graphCreateFacName.value = "";
     graphCreateFacDesc.value = "";
   }
@@ -333,7 +326,6 @@ export function useGraph(novelId: Ref<string>) {
       }
       body.character_id = cid;
       body.description = (graphCreateCharDesc.value || "").trim() || null;
-      body.current_location = (graphCreateCharLoc.value || "").trim() || null;
     } else if (t === "timeline_event") {
       const slot = (graphCreateTlSlot.value || "").trim();
       const summ = (graphCreateTlSummary.value || "").trim();
@@ -343,10 +335,6 @@ export function useGraph(novelId: Ref<string>) {
       }
       body.time_slot = slot;
       body.summary = summ;
-      const ci = parseInt(String(graphCreateTlChapterIndexStr.value || "").trim(), 10);
-      if (!Number.isNaN(ci) && ci >= 1) {
-        body.chapter_index = ci;
-      }
     } else {
       const fn = (graphCreateFacName.value || "").trim();
       if (!fn) {
@@ -382,7 +370,7 @@ export function useGraph(novelId: Ref<string>) {
     }
     try {
       await ElMessageBox.confirm(
-        `确定删除节点「${nodeIdStr}」？人物会清理相关关系边与出场边；时间线删除会重排后续 ev:timeline 下标。`,
+        `确定删除节点「${nodeIdStr}」？人物会清理相关关系边与出场边；时间线删除会移除该事件 id 并清理相关边，其余事件 id 不变。`,
         "删除节点",
         { type: "warning", confirmButtonText: "删除", cancelButtonText: "取消" }
       );
@@ -600,7 +588,6 @@ export function useGraph(novelId: Ref<string>) {
     graphEditNode,
     graphEditEdge,
     graphCharDesc,
-    graphCharLoc,
     graphCharGoals,
     graphCharFacts,
     graphFacDesc,
@@ -618,10 +605,8 @@ export function useGraph(novelId: Ref<string>) {
     graphCreateType,
     graphCreateCharId,
     graphCreateCharDesc,
-    graphCreateCharLoc,
     graphCreateTlSlot,
     graphCreateTlSummary,
-    graphCreateTlChapterIndexStr,
     graphCreateFacName,
     graphCreateFacDesc,
     graphCharacterNodeIds,

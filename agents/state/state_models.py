@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 from agents._internal_marks import z7_module_mark
 
@@ -40,8 +40,6 @@ class CharacterState(BaseModel):
     # 兼容 LLM 常见输出：{"id": "..."} 或 {"character_id": "..."}
     character_id: str = Field(alias="id")
     description: Optional[str] = None
-    current_location: Optional[str] = None
-    alive: Optional[bool] = None
 
     # 关系/动机/已知事实保持“总结型”，避免状态膨胀
     relationships: Dict[str, str] = Field(default_factory=dict)
@@ -51,12 +49,27 @@ class CharacterState(BaseModel):
     # 可选：当模型需要保留更长的推演链时使用
     history: List[str] = Field(default_factory=list)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_legacy_location_alive(cls, data):
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if k not in ("current_location", "alive")}
+        return data
+
 
 class TimelineEvent(BaseModel):
     model_config = ConfigDict(extra="allow")
+    # 稳定图谱 id：ev:timeline:{uuid.hex}；顺序仍以 world.timeline 列表为准，勿用下标当 id
+    event_id: Optional[str] = None
     time_slot: str
-    chapter_index: Optional[int] = None
     summary: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_timeline_chapter_index(cls, data):
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if k != "chapter_index"}
+        return data
 
 
 class WorldState(BaseModel):
@@ -118,8 +131,6 @@ class ContinuityState(BaseModel):
     # POV（如果你希望稳定文风，这个字段很关键）
     pov_character_id: Optional[str] = None
 
-    current_location: Optional[str] = None
-
     @field_validator("who_is_present", mode="before")
     @classmethod
     def _coerce_who_is_present(cls, v):
@@ -133,6 +144,13 @@ class ContinuityState(BaseModel):
                     out.append({"character_id": s})
             return out
         return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_continuity_location(cls, data):
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if k != "current_location"}
+        return data
 
 
 class NovelState(BaseModel):

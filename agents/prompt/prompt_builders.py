@@ -63,7 +63,7 @@ def build_plan_chapter_prompt(
         "  - 必须包含 meta（沿用 novel_id/novel_title 等）与 continuity（更新到本章结束后的 time_slot/who_is_present/location/POV）\n"
         "  - characters：只需要输出本章涉及/变化的角色（其余角色不必重复输出）\n"
         "  - world：只需要输出本章新增/变化的部分（可选：0~1 条 timeline 事件，summary 简短）\n"
-        "  - 章节归属事件由用户在前端选择/新建并由后端落盘绑定；你不要尝试在 world.timeline 里设置/修改 chapter_index 来“绑定章节”\n"
+        "  - 章节与时间线仅通过 time_slot 文本对齐；不要在 world.timeline 里写章号字段\n"
         "  - world.timeline 每个事件对象必须严格包含字段：time_slot（字符串）、summary（字符串），"
         "禁止使用 event_summary、desc、content 等别名\n"
         "  - recent_summaries：可选（0~1 条简短摘要）\n"
@@ -83,9 +83,9 @@ def build_write_chapter_prompt(
     strict_no_supporting: bool = False,
 ) -> tuple[str, str]:
     system = (
-        "你是一个网文作家。请根据当前 NovelState 与 ChapterPlan 生成章节正文。"
+        "你是一个网文作家。请根据当前 NovelState 与 ChapterPlan 生成章节正文，不要有markdown格式。"
         "要求：必须严格遵守设定与连续性；不要提及自己是 AI；不要输出任何多余说明。"
-        "正文直接开始叙述，4000-5000字。"
+        "正文直接开始叙述，4000-5000字范围。"
     )
     plan_text = (
         plan.model_dump_json(ensure_ascii=False, indent=2)

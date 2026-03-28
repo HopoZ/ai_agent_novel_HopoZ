@@ -10,10 +10,12 @@ from typing import Any, Dict, List, Optional
 from agents.persistence.graph_tables import (
     ensure_graph_tables,
     load_event_relations,
+    new_timeline_event_id,
     replace_timeline_next_edges_from_state,
     save_character_entities,
     save_event_relations,
     save_event_rows,
+    timeline_index_for_node_id,
     timeline_next_graph_neighbors,
 )
 from agents.persistence.storage import load_chapter, load_state, save_state
@@ -25,7 +27,7 @@ def resolve_anchor_time_slot(novel_id: str, anchor_id: Optional[str]) -> Optiona
     """
     把锚点 id 解析为 time_slot。
     支持：
-      - ev:timeline:{idx}
+      - ev:timeline:{稳定id 或 列表下标数字}（下标仅兼容旧请求）
       - ev:chapter:{chapter_index}
     """
     if not anchor_id:
@@ -35,10 +37,12 @@ def resolve_anchor_time_slot(novel_id: str, anchor_id: Optional[str]) -> Optiona
         return None
     try:
         if anchor.startswith("ev:timeline:"):
-            idx = int(anchor.split("ev:timeline:", 1)[1])
             st = load_state(novel_id)
-            if st and st.world.timeline and 0 <= idx < len(st.world.timeline):
-                return st.world.timeline[idx].time_slot
+            if not st or not st.world.timeline:
+                return None
+            ti = timeline_index_for_node_id(st, anchor)
+            if ti is not None and 0 <= ti < len(st.world.timeline):
+                return st.world.timeline[ti].time_slot
             return None
         if anchor.startswith("ev:chapter:"):
             chap_idx = int(anchor.split("ev:chapter:", 1)[1])
@@ -92,31 +96,16 @@ def llm_call_options(req: RunModeRequest) -> Optional[Dict[str, Any]]:
     return opts or None
 
 
-def timeline_idx(node_id: Optional[str]) -> Optional[int]:
-    raw = str(node_id or "").strip()
-    if not raw.startswith("ev:timeline:"):
-        return None
-    try:
-        return int(raw.split("ev:timeline:", 1)[1].strip())
-    except Exception:
-        return None
-
-
 def apply_chapter_event_selection(next_state: NovelState, chapter_index: int, req: RunModeRequest) -> NovelState:
     """
-    新时序语义：
-    - existing_event_id: 把本章绑定到已有事件
-    - new_event_*: 新建事件并插入前后位置后绑定本章
+    时间线侧：不再把「章号」写入 timeline。
+    - existing_event_id：不再改 state（章节与时间线对齐仅靠 time_slot）
+    - new_event_*：仍可在列表中插入新事件（无 chapter_index 字段）
     """
     tl = list(next_state.world.timeline or [])
 
-    for ev in tl:
-        if ev.chapter_index == chapter_index:
-            ev.chapter_index = None
-
-    existing_idx = timeline_idx(req.existing_event_id)
+    existing_idx = timeline_index_for_node_id(next_state, req.existing_event_id)
     if existing_idx is not None and 0 <= existing_idx < len(tl):
-        tl[existing_idx].chapter_index = chapter_index
         next_state.world.timeline = tl
         return next_state
 
@@ -126,8 +115,8 @@ def apply_chapter_event_selection(next_state: NovelState, chapter_index: int, re
         next_state.world.timeline = tl
         return next_state
 
-    prev_idx = timeline_idx(req.new_event_prev_id)
-    next_idx = timeline_idx(req.new_event_next_id)
+    prev_idx = timeline_index_for_node_id(next_state, req.new_event_prev_id)
+    next_idx = timeline_index_for_node_id(next_state, req.new_event_next_id)
     insert_at = len(tl)
     if prev_idx is not None and 0 <= prev_idx < len(tl):
         insert_at = prev_idx + 1
@@ -140,8 +129,8 @@ def apply_chapter_event_selection(next_state: NovelState, chapter_index: int, re
     tl.insert(
         insert_at,
         TimelineEvent(
+            event_id=new_timeline_event_id(),
             time_slot=new_slot,
-            chapter_index=chapter_index,
             summary=new_summary,
         ),
     )
@@ -169,7 +158,7 @@ def build_llm_user_task(
     timeline = list(st.world.timeline or []) if st else []
 
     def _event_desc(event_id: str) -> str:
-        idx = timeline_idx(event_id)
+        idx = timeline_index_for_node_id(st, event_id) if st else None
         if idx is None or not (0 <= idx < len(timeline)):
             return event_id
         ev = timeline[idx]
@@ -177,21 +166,21 @@ def build_llm_user_task(
 
     existing_id = str(req.existing_event_id or "").strip()
     if existing_id.startswith("ev:timeline:") and st:
-        idx = timeline_idx(existing_id)
+        idx = timeline_index_for_node_id(st, existing_id)
         if idx is not None and 0 <= idx < len(timeline):
             ev = timeline[idx]
             lines.append(f"章节归属时间线：{existing_id}（{ev.time_slot}｜{ev.summary}）")
             preds, succs = timeline_next_graph_neighbors(novel_id, existing_id)
             if preds or succs:
                 for pid in preds:
-                    pi = timeline_idx(pid)
+                    pi = timeline_index_for_node_id(st, pid)
                     if pi is not None and 0 <= pi < len(timeline):
                         pev = timeline[pi]
                         lines.append(
                             f"关系图前置事件（timeline_next）：{pid}（{pev.time_slot}｜{pev.summary}）"
                         )
                 for sid in succs:
-                    si = timeline_idx(sid)
+                    si = timeline_index_for_node_id(st, sid)
                     if si is not None and 0 <= si < len(timeline):
                         sev = timeline[si]
                         lines.append(
@@ -249,7 +238,7 @@ def prebuild_chapter_graph_records(
     """
     生成前预构建图谱四表中的“本章骨架”：
     - event_relations：主要人物 -> ev:chapter:{n} 的 appear 边
-    - 若已选择章节归属事件，先把 chapter_index 绑定到 timeline
+    - 若已选择章节归属事件，仅更新 state 中的时间线插入逻辑（不按章号写 timeline）
     """
     st = load_state(novel_id)
     if not st:
@@ -276,8 +265,6 @@ def prebuild_chapter_graph_records(
         char_map[str(c.character_id)] = {
             "character_id": c.character_id,
             "description": c.description,
-            "current_location": c.current_location,
-            "alive": c.alive,
             "goals": list(c.goals or []),
             "known_facts": list(c.known_facts or []),
         }
@@ -287,8 +274,6 @@ def prebuild_chapter_graph_records(
             {
                 "character_id": cid,
                 "description": None,
-                "current_location": None,
-                "alive": None,
                 "goals": [],
                 "known_facts": [],
             },
@@ -299,12 +284,11 @@ def prebuild_chapter_graph_records(
         novel_id,
         [
             {
-                "event_id": f"ev:timeline:{i}",
+                "event_id": (ev.event_id or ""),
                 "time_slot": str(ev.time_slot or "").strip(),
                 "summary": str(ev.summary or "").strip(),
-                "chapter_index": ev.chapter_index,
             }
-            for i, ev in enumerate(st.world.timeline or [])
+            for ev in (st.world.timeline or [])
         ],
     )
 

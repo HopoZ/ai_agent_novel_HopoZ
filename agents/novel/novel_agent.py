@@ -166,7 +166,6 @@ class NovelAgent:
                 time_slot=start_time_slot or "未指定（由模型选择）",
                 pov_character_id=pov_character_id,
                 who_is_present=[],
-                current_location=None,
             ),
             characters=[],
             world={},

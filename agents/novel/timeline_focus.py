@@ -28,5 +28,5 @@ def resolve_timeline_focus_event_id(
     chap = load_chapter(novel_id, chapter_index)
     if chap and str(chap.time_slot or "").strip():
         slot = str(chap.time_slot).strip()
-    ids = resolve_chapter_event_ids(state, chapter_index, slot)
+    ids = resolve_chapter_event_ids(state, slot)
     return ids[0] if ids else None

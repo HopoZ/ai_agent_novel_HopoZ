@@ -30,12 +30,12 @@ def test_infer_time_slot_interval_and_legacy(tmp_path, monkeypatch):
         base / "state.json",
         {
             "meta": {"novel_id": novel_id, "initialized": True, "current_chapter_index": 0, "lore_tags": []},
-            "continuity": {"time_slot": "t0", "who_is_present": [], "pov_character_id": None, "current_location": None},
+            "continuity": {"time_slot": "t0", "who_is_present": [], "pov_character_id": None},
             "characters": [],
             "world": {
                 "timeline": [
-                    {"time_slot": "A", "chapter_index": None, "summary": "a"},
-                    {"time_slot": "B", "chapter_index": None, "summary": "b"},
+                    {"time_slot": "A", "summary": "a"},
+                    {"time_slot": "B", "summary": "b"},
                 ]
             },
             "recent_summaries": [],

@@ -9,6 +9,16 @@ from agents.persistence.storage import list_chapters
 from agents.state.state_models import NovelState
 
 
+def _timeline_event_id_for_chapter(state: NovelState, chap) -> Optional[str]:
+    ts = str(chap.time_slot or "").strip()
+    if not ts:
+        return None
+    for ev in state.world.timeline or []:
+        if str(ev.time_slot or "").strip() == ts and (ev.event_id or "").strip():
+            return str(ev.event_id).strip()
+    return None
+
+
 def build_novel_graph_payload(novel_id: str, state: NovelState, view: str) -> Dict[str, Any]:
     """
     view:
@@ -56,8 +66,10 @@ def build_novel_graph_payload(novel_id: str, state: NovelState, view: str) -> Di
             add_edge(src, tgt, str(r.get("label", "")), "relationship")
 
     if view in {"events", "mixed"}:
-        for idx, ev in enumerate(state.world.timeline or []):
-            eid = f"ev:timeline:{idx}"
+        for ev in state.world.timeline or []:
+            eid = (ev.event_id or "").strip()
+            if not eid:
+                continue
             label = f"{ev.time_slot}：{ev.summary}"
             add_node(eid, label, "timeline_event", {"data": ev.model_dump(mode="json")})
 
@@ -87,19 +99,9 @@ def build_novel_graph_payload(novel_id: str, state: NovelState, view: str) -> Di
             label = f"章节事件 · {chap.time_slot}"
             add_node(cid, label, "chapter_event", {"data": chap.model_dump(mode="json")})
 
-            timeline_idx = -1
-            for ti, ev in enumerate(state.world.timeline or []):
-                if ev.chapter_index == chap.chapter_index:
-                    timeline_idx = ti
-                    break
-            if timeline_idx < 0:
-                ts = str(chap.time_slot or "").strip()
-                for ti, ev in enumerate(state.world.timeline or []):
-                    if str(ev.time_slot or "").strip() == ts:
-                        timeline_idx = ti
-                        break
-            if timeline_idx >= 0:
-                add_edge(cid, f"ev:timeline:{timeline_idx}", "属于事件", "chapter_belongs")
+            teid = _timeline_event_id_for_chapter(state, chap)
+            if teid:
+                add_edge(cid, teid, "属于事件", "chapter_belongs")
 
     if view == "mixed":
         for fname, fdesc in (state.world.factions or {}).items():

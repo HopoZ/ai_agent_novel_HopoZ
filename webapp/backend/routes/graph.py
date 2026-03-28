@@ -6,12 +6,13 @@ from agents.persistence.graph_tables import (
     ensure_graph_tables,
     load_character_relations,
     load_event_relations,
-    remap_timeline_numeric_edges_after_delete,
+    new_timeline_event_id,
     replace_timeline_next_edges_from_state,
     save_character_entities,
     save_character_relations,
     save_event_relations,
     sync_timeline_event_entity_rows,
+    timeline_index_for_node_id,
 )
 from agents.persistence.storage import load_state, save_state
 from agents.state.state_models import CharacterState, TimelineEvent
@@ -60,8 +61,6 @@ def patch_graph_node(novel_id: str, req: GraphNodePatchRequest):
             raise HTTPException(status_code=404, detail="character not found")
         if "description" in patch:
             hit.description = str(patch.get("description") or "").strip() or hit.description
-        if "current_location" in patch:
-            hit.current_location = str(patch.get("current_location") or "").strip() or hit.current_location
         if "goals" in patch:
             v = patch.get("goals")
             if isinstance(v, list):
@@ -84,8 +83,6 @@ def patch_graph_node(novel_id: str, req: GraphNodePatchRequest):
                 {
                     "character_id": c.character_id,
                     "description": c.description,
-                    "current_location": c.current_location,
-                    "alive": c.alive,
                     "goals": list(c.goals or []),
                     "known_facts": list(c.known_facts or []),
                 }
@@ -106,12 +103,8 @@ def patch_graph_node(novel_id: str, req: GraphNodePatchRequest):
         return {"ok": True, "node_id": node_id}
 
     if node_id.startswith("ev:timeline:"):
-        raw = node_id.split("ev:timeline:", 1)[1].strip()
-        try:
-            idx = int(raw)
-        except Exception:
-            raise HTTPException(status_code=400, detail="invalid timeline index")
-        if not (0 <= idx < len(state.world.timeline or [])):
+        idx = timeline_index_for_node_id(state, node_id)
+        if idx is None or not (0 <= idx < len(state.world.timeline or [])):
             raise HTTPException(status_code=404, detail="timeline event not found")
         ev = state.world.timeline[idx]
         if "time_slot" in patch:
@@ -147,7 +140,6 @@ def create_graph_node(novel_id: str, req: GraphNodeCreateRequest):
             CharacterState(
                 character_id=cid,
                 description=str(req.description or "").strip() or None,
-                current_location=str(req.current_location or "").strip() or None,
                 goals=[],
                 known_facts=[],
                 relationships={},
@@ -160,8 +152,6 @@ def create_graph_node(novel_id: str, req: GraphNodeCreateRequest):
                 {
                     "character_id": c.character_id,
                     "description": c.description,
-                    "current_location": c.current_location,
-                    "alive": c.alive,
                     "goals": list(c.goals or []),
                     "known_facts": list(c.known_facts or []),
                 }
@@ -176,19 +166,19 @@ def create_graph_node(novel_id: str, req: GraphNodeCreateRequest):
         if not slot or not summ:
             raise HTTPException(status_code=400, detail="time_slot and summary are required")
         tl = list(state.world.timeline or [])
+        eid = new_timeline_event_id()
         tl.append(
             TimelineEvent(
+                event_id=eid,
                 time_slot=slot,
                 summary=summ,
-                chapter_index=req.chapter_index,
             )
         )
         state.world.timeline = tl
         save_state(novel_id, state)
         sync_timeline_event_entity_rows(novel_id, state)
         replace_timeline_next_edges_from_state(novel_id, state)
-        new_idx = len(tl) - 1
-        return {"ok": True, "node_id": f"ev:timeline:{new_idx}"}
+        return {"ok": True, "node_id": eid}
 
     if nt == "faction":
         fname = str(req.faction_name or "").strip()
@@ -260,8 +250,6 @@ def delete_graph_node(novel_id: str, node_id: str = Query(..., description="char
                 {
                     "character_id": c.character_id,
                     "description": c.description,
-                    "current_location": c.current_location,
-                    "alive": c.alive,
                     "goals": list(c.goals or []),
                     "known_facts": list(c.known_facts or []),
                 }
@@ -279,20 +267,19 @@ def delete_graph_node(novel_id: str, node_id: str = Query(..., description="char
         return {"ok": True, "node_id": nid}
 
     if nid.startswith("ev:timeline:"):
-        raw = nid.split("ev:timeline:", 1)[1].strip()
-        if not raw.isdigit():
-            raise HTTPException(status_code=400, detail="只能删除正式时间线索引节点（非草稿 id）")
-        try:
-            idx = int(raw)
-        except Exception:
-            raise HTTPException(status_code=400, detail="invalid timeline index")
         tl = list(state.world.timeline or [])
-        if not (0 <= idx < len(tl)):
+        idx = timeline_index_for_node_id(state, nid)
+        if idx is None or not (0 <= idx < len(tl)):
             raise HTTPException(status_code=404, detail="timeline event not found")
+        tid = (tl[idx].event_id or "").strip() or nid
         tl.pop(idx)
         state.world.timeline = tl
         er = load_event_relations(novel_id)
-        er = remap_timeline_numeric_edges_after_delete(er, idx)
+        er = [
+            r
+            for r in er
+            if str(r.get("source", "") or "").strip() != tid and str(r.get("target", "") or "").strip() != tid
+        ]
         save_event_relations(novel_id, er)
         save_state(novel_id, state)
         sync_timeline_event_entity_rows(novel_id, state)
@@ -445,31 +432,9 @@ def patch_graph_edge(novel_id: str, req: GraphEdgePatchRequest):
         return {"ok": True}
 
     if et == "chapter_belongs":
-        if not nsrc.startswith("ev:chapter:"):
-            raise HTTPException(status_code=400, detail="chapter_belongs source must be ev:chapter:*")
-        try:
-            chap_idx = int(nsrc.split("ev:chapter:", 1)[1].strip())
-        except Exception:
-            raise HTTPException(status_code=400, detail="invalid chapter source")
-
-        for ev in state.world.timeline or []:
-            if ev.chapter_index == chap_idx:
-                ev.chapter_index = None
-
-        if op != "delete" and ntgt:
-            if not ntgt.startswith("ev:timeline:"):
-                raise HTTPException(status_code=400, detail="chapter_belongs target must be ev:timeline:* or empty")
-            try:
-                t_idx = int(ntgt.split("ev:timeline:", 1)[1].strip())
-            except Exception:
-                raise HTTPException(status_code=400, detail="invalid timeline target")
-            if not (0 <= t_idx < len(state.world.timeline or [])):
-                raise HTTPException(status_code=404, detail="timeline event not found")
-            state.world.timeline[t_idx].chapter_index = chap_idx
-
-        save_state(novel_id, state)
-        sync_timeline_event_entity_rows(novel_id, state)
-        replace_timeline_next_edges_from_state(novel_id, state)
-        return {"ok": True}
+        raise HTTPException(
+            status_code=400,
+            detail="chapter_belongs 已废弃：章节与时间线仅通过 time_slot 对齐，请改时间线或章节 time_slot",
+        )
 
     raise HTTPException(status_code=400, detail="unsupported edge_type")
