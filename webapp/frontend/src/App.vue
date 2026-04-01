@@ -119,6 +119,13 @@
     :previewing-input="previewingInput"
     @confirm="confirmNextChapterFromHint"
   />
+
+  <OptimizeIntentDialog
+    v-model="optimizeIntentVisible"
+    v-model:direction-draft="optimizeIntentDraft"
+    :previewing-input="previewingInput"
+    @confirm="confirmOptimizeIntent"
+  />
 </template>
 
 <script lang="ts" setup>
@@ -136,6 +143,7 @@ import CreateNovelDialog from "./components/dialogs/CreateNovelDialog.vue";
 import InputPreviewDialog from "./components/dialogs/InputPreviewDialog.vue";
 import RoleManagerDialog from "./components/dialogs/RoleManagerDialog.vue";
 import NextChapterHintDialog from "./components/dialogs/NextChapterHintDialog.vue";
+import OptimizeIntentDialog from "./components/dialogs/OptimizeIntentDialog.vue";
 
 type AppRunMode =
   | "init_state"
@@ -228,6 +236,11 @@ const pendingRunStarting = ref(false);
 
 const nextChapterHintVisible = ref(false);
 const nextChapterHintDraft = ref("");
+
+const optimizeIntentVisible = ref(false);
+const optimizeIntentDraft = ref("");
+/** 优化弹窗确认后、写入本次 preview/run 的 user_task 附加段（buildRunPayload 消费后清空） */
+const pendingOptimizeDirection = ref("");
 /** 从「下章提示」写入任务并打开 Input 预览时，若用户关闭预览未运行，则恢复中间栏任务原文本 */
 const userTaskBeforePreviewFromNextChapter = ref<string | null>(null);
 /** 最近一次写章/修订/扩写完成后，本章归属的时间线事件 id（用于「下章提示 → 生成下一章」默认同属该事件） */
@@ -609,12 +622,16 @@ function buildRunPayload(runMode: AppRunMode) {
   }
 
   const loreTags = selectedTags.value || [];
-  if (loreTags.length === 0) {
+  if (loreTags.length === 0 && runMode !== "optimize_suggestions") {
     ElMessage.error("请至少勾选 1 项设定（lores 下对应标签）。");
     return null;
   }
   if (!form.userTask || !form.userTask.trim()) {
-    ElMessage.error("请填写任务框内容（生成/扩写/优化/初始化均需要）。");
+    ElMessage.error(
+      runMode === "optimize_suggestions"
+        ? "请先在「本章任务」中填写待优化的正文或说明。"
+        : "请填写任务框内容（生成/扩写/优化/初始化均需要）。"
+    );
     return null;
   }
   if (runMode !== "optimize_suggestions" && runMode !== "init_state") {
@@ -623,12 +640,19 @@ function buildRunPayload(runMode: AppRunMode) {
     }
   }
 
-  const mergedTask = (() => {
+  let mergedTask = (() => {
     const base = form.userTask || "";
     const picked = (form.focusCharacterIds || []).filter(Boolean);
     if (picked.length === 0) return base;
     return `${base}\n\n（配角设定：${picked.join("、")}）`;
   })();
+  if (runMode === "optimize_suggestions") {
+    const dir = pendingOptimizeDirection.value.trim();
+    if (dir) {
+      mergedTask = `${mergedTask}\n\n【作者对优化方向的要求】\n${dir}`;
+    }
+    pendingOptimizeDirection.value = "";
+  }
   const payload: Record<string, unknown> = {
     mode: runMode,
     user_task: mergedTask,
@@ -642,7 +666,8 @@ function buildRunPayload(runMode: AppRunMode) {
     supporting_character_ids: (form.focusCharacterIds || []).filter(Boolean),
     chapter_preset_name: form.chapterPresetName || null,
     current_map: (form.currentMap || "").trim() || null,
-    lore_tags: loreTags,
+    lore_tags:
+      runMode === "optimize_suggestions" && loreTags.length === 0 ? null : loreTags,
   };
   payload.llm_temperature =
     form.llmTemperature != null && !Number.isNaN(form.llmTemperature)
@@ -826,7 +851,26 @@ function runExpand() {
   return startPreviewRun("expand_chapter");
 }
 function runOptimize() {
-  return startPreviewRun("optimize_suggestions");
+  const novelId = (form.novelId || "").trim();
+  if (!novelId) {
+    ElMessage.error("请先选择或创建小说。");
+    return;
+  }
+  if (!(form.userTask || "").trim()) {
+    ElMessage.error("请先在「本章任务」中填写待优化的正文或说明。");
+    return;
+  }
+  optimizeIntentDraft.value = "";
+  optimizeIntentVisible.value = true;
+}
+
+async function confirmOptimizeIntent() {
+  pendingOptimizeDirection.value = (optimizeIntentDraft.value || "").trim();
+  optimizeIntentVisible.value = false;
+  const ok = await startPreviewRun("optimize_suggestions");
+  if (!ok) {
+    pendingOptimizeDirection.value = "";
+  }
 }
 function runInitWorld() {
   return startPreviewRun("init_state");

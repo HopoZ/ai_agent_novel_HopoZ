@@ -129,8 +129,8 @@ def build_optimize_suggestions_prompt(
     lorebook: str,
 ) -> tuple[str, str]:
     system = (
-        "你是资深网文编辑与策划。根据世界观与当前小说状态，针对用户提供的素材或问题给出可执行的优化建议。"
-        "不要输出完整重写版正文；以分条建议为主（可含极短示例句）。不要大段 markdown 标题。"
+        "你是资深网文编辑与策划。根据世界观与当前小说状态，针对用户提供的素材或问题执行优化建议。"
+        "输出完整重写版正文；不要大段 markdown 标题。"
     )
     human = (
         f"用户素材/问题：\n{user_task}\n\n"

@@ -52,6 +52,33 @@ export function useGraph(novelId: Ref<string>) {
   const graphCreateFacName = ref("");
   const graphCreateFacDesc = ref("");
 
+  /** 全屏图谱搜索：匹配 id / 展示名 / 类型 / 节点 data 内字符串 */
+  const graphSearchQuery = ref("");
+  const graphSearchFocusIdx = ref(0);
+
+  function graphNodeSearchBlob(n: Record<string, unknown>): string {
+    const parts: string[] = [
+      String(n.id ?? ""),
+      typeof n.label === "string" ? n.label : "",
+      String(n.type ?? ""),
+    ];
+    const d = n.data;
+    if (d && typeof d === "object" && !Array.isArray(d)) {
+      for (const v of Object.values(d as Record<string, unknown>)) {
+        if (typeof v === "string") parts.push(v);
+        else if (Array.isArray(v)) parts.push(v.map((x) => String(x)).join(" "));
+        else if (v != null) parts.push(JSON.stringify(v));
+      }
+    }
+    return parts.join(" ").toLowerCase();
+  }
+
+  function graphNodeMatchesQuery(n: Record<string, unknown>, q: string): boolean {
+    const t = q.trim().toLowerCase();
+    if (!t) return true;
+    return graphNodeSearchBlob(n).includes(t);
+  }
+
   const graphCharacterNodeIds = computed(() => {
     const nodes = graphData.value?.nodes || [];
     return nodes
@@ -472,23 +499,56 @@ export function useGraph(novelId: Ref<string>) {
       return;
     }
 
-    const nodes = (payload.nodes || []).map((n: Record<string, unknown>) => ({
-      ...n,
-      name: n.label || n.id,
-      symbolSize: n.type === "character" ? 28 : n.type === "faction" ? 22 : 18,
-      itemStyle: { color: typeColor(String(n.type || "")) },
-      draggable: true,
-      value: n.type,
-    }));
-    const links = (payload.edges || []).map((e: Record<string, unknown>) => ({
-      ...e,
-      rel_label: typeof e?.label === "string" ? e.label : "",
-      lineStyle: { opacity: 0.7, width: 1.2, curveness: 0.18 },
-      label: {
-        show: !!(typeof e?.label === "string" ? e.label : ""),
-        formatter: typeof e?.label === "string" ? e.label : "",
-      },
-    }));
+    const qRaw = graphSearchQuery.value.trim().toLowerCase();
+    const rawNodeList = (payload.nodes || []) as Record<string, unknown>[];
+    const matchById = new Map<string, boolean>();
+    for (const n of rawNodeList) {
+      const id = String(n.id ?? "");
+      matchById.set(id, !qRaw || graphNodeMatchesQuery(n, qRaw));
+    }
+
+    const nodes = rawNodeList.map((n: Record<string, unknown>) => {
+      const idStr = String(n.id ?? "");
+      const match = matchById.get(idStr) !== false;
+      const baseColor = typeColor(String(n.type || ""));
+      const displayName =
+        typeof n.label === "string" && n.label ? n.label : String(n.id ?? "");
+      return {
+        ...n,
+        name: displayName,
+        symbolSize: n.type === "character" ? 28 : n.type === "faction" ? 22 : 18,
+        itemStyle: match
+          ? {
+              color: baseColor,
+              opacity: 1,
+              borderColor: qRaw ? "#b8860b" : undefined,
+              borderWidth: qRaw ? 2 : 0,
+            }
+          : { color: baseColor, opacity: 0.06 },
+        draggable: true,
+        value: n.type,
+      };
+    });
+    const links = (payload.edges || []).map((e: Record<string, unknown>) => {
+      const sid = String(e.source ?? "");
+      const tid = String(e.target ?? "");
+      const sm = matchById.get(sid) !== false;
+      const tm = matchById.get(tid) !== false;
+      const edgeLit = !qRaw || sm || tm;
+      return {
+        ...e,
+        rel_label: typeof e?.label === "string" ? e.label : "",
+        lineStyle: {
+          opacity: edgeLit ? 0.65 : 0.03,
+          width: edgeLit ? 1.2 : 0.6,
+          curveness: 0.18,
+        },
+        label: {
+          show: edgeLit && !!(typeof e?.label === "string" ? e.label : ""),
+          formatter: typeof e?.label === "string" ? e.label : "",
+        },
+      };
+    });
 
     const timelineIds = new Set(
       nodes
@@ -585,6 +645,47 @@ export function useGraph(novelId: Ref<string>) {
     }
   }
 
+  watch(graphSearchQuery, () => {
+    graphSearchFocusIdx.value = 0;
+    if (graphFullscreenVisible.value) {
+      void nextTick(() => renderGraph());
+    }
+  });
+
+  function focusNextGraphSearchMatch() {
+    ensureGraphChart();
+    if (!graphChart) return;
+    const q = graphSearchQuery.value.trim().toLowerCase();
+    if (!q) {
+      ElMessage.info("请先输入搜索关键词。");
+      return;
+    }
+    const payload = graphData.value;
+    if (!payload?.nodes?.length) return;
+    const indices: number[] = [];
+    (payload.nodes as Record<string, unknown>[]).forEach((n, i) => {
+      if (graphNodeMatchesQuery(n, q)) indices.push(i);
+    });
+    if (indices.length === 0) {
+      ElMessage.info("当前图谱没有匹配的节点。");
+      return;
+    }
+    const i = graphSearchFocusIdx.value % indices.length;
+    const dataIndex = indices[i]!;
+    graphSearchFocusIdx.value += 1;
+    try {
+      graphChart.dispatchAction({ type: "focusNodeAdjacency", seriesIndex: 0, dataIndex });
+    } catch {
+      ElMessage.warning("定位节点失败，可尝试缩小搜索词后重试。");
+    }
+  }
+
+  function clearGraphSearch() {
+    graphSearchQuery.value = "";
+    graphSearchFocusIdx.value = 0;
+    void nextTick(() => renderGraph());
+  }
+
   watch([graphView, novelId, graphFullscreenVisible], async ([, , opened]) => {
     if (!opened) return;
     await nextTick();
@@ -653,6 +754,9 @@ export function useGraph(novelId: Ref<string>) {
     deleteCurrentGraphNode,
     loadGraph,
     renderGraph,
+    graphSearchQuery,
+    focusNextGraphSearchMatch,
+    clearGraphSearch,
   });
 }
 

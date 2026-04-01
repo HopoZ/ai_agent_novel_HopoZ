@@ -259,6 +259,9 @@
           <el-button type="info" plain @click="runOptimize" :disabled="running">
             优化内容
           </el-button>
+          <div class="muted" style="margin-top:4px; line-height:1.45;">
+            优化：无需勾选左侧标签（将按仓库内全部 lores 注入）。先写「本章任务」素材，点按钮后在弹窗填写优化方向（可空）。
+          </div>
           <el-button v-if="running" type="danger" @click="abortRun">中止生成</el-button>
         </div>
       </div>

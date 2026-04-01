@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Search } from "@element-plus/icons-vue";
 import { inject } from "vue";
 import { GRAPH_INJECTION_KEY, type GraphController } from "../../composables/useGraph";
 
@@ -24,7 +25,24 @@ const graph = inject(GRAPH_INJECTION_KEY) as GraphController;
       <el-button size="small" type="success" plain @click="graph.openGraphNodeCreate" :disabled="!novelId">
         新建节点
       </el-button>
-      <span class="muted">点击节点可编辑/删除；滚轮缩放，拖拽平移。</span>
+      <el-input
+        v-model="graph.graphSearchQuery"
+        class="graph-search-input"
+        :class="{ 'graph-search-input--active': !!(graph.graphSearchQuery || '').trim() }"
+        clearable
+        placeholder="搜索节点（id、名称、类型、简介等）"
+        @clear="graph.clearGraphSearch"
+        @keyup.enter="graph.focusNextGraphSearchMatch"
+      >
+        <template #prefix>
+          <el-icon class="graph-search-prefix" aria-hidden="true"><Search /></el-icon>
+        </template>
+      </el-input>
+      <el-button size="small" @click="graph.focusNextGraphSearchMatch" :disabled="!novelId">
+        下一匹配
+      </el-button>
+      <el-button size="small" text type="primary" @click="graph.clearGraphSearch">清空搜索</el-button>
+      <span class="muted">点击节点可编辑/删除；滚轮缩放，拖拽平移。有搜索词时未命中节点变淡，边随之减弱。</span>
     </div>
     <div style="height:10px;"></div>
     <div class="graph-box-fullscreen">
@@ -335,5 +353,45 @@ const graph = inject(GRAPH_INJECTION_KEY) as GraphController;
 }
 .back-btn-highlight {
   font-weight: 600;
+}
+.graph-search-input {
+  width: min(280px, 100%);
+  max-width: 320px;
+  flex-shrink: 0;
+}
+.graph-search-prefix {
+  color: #a67c2a;
+  font-size: 16px;
+  margin-right: 2px;
+}
+.graph-search-input :deep(.el-input__wrapper) {
+  background: linear-gradient(180deg, #fffef9 0%, #faf4e8 100%);
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 1px rgba(196, 165, 116, 0.65) inset,
+    0 2px 10px rgba(74, 102, 118, 0.08);
+  transition:
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+}
+.graph-search-input :deep(.el-input__wrapper:hover) {
+  box-shadow:
+    0 0 0 1px #c4a574 inset,
+    0 4px 14px rgba(184, 134, 11, 0.12);
+}
+.graph-search-input :deep(.el-input__wrapper.is-focus) {
+  background: #fffdf8;
+  box-shadow:
+    0 0 0 2px #b8860b inset,
+    0 0 0 4px rgba(184, 134, 11, 0.18),
+    0 6px 20px rgba(184, 134, 11, 0.15);
+}
+.graph-search-input--active :deep(.el-input__wrapper:not(.is-focus)) {
+  box-shadow:
+    0 0 0 2px rgba(184, 134, 11, 0.45) inset,
+    0 2px 12px rgba(184, 134, 11, 0.14);
+}
+.graph-search-input :deep(.el-input__inner::placeholder) {
+  color: #a8987a;
 }
 </style>
