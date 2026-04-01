@@ -10,8 +10,10 @@ from agents.novel import NovelAgent
 from agents.persistence.graph_tables import (
     ensure_graph_tables,
     load_character_entities,
+    patch_new_event_timeline_next_edges,
     persist_chapter_artifacts,
     replace_timeline_next_edges_from_state,
+    resolve_chapter_timeline_event_id,
     validate_timeline_event_id,
 )
 from agents.persistence.storage import load_chapter, load_state, save_state, list_chapters
@@ -25,6 +27,7 @@ from webapp.backend.run_helpers import (
     llm_call_options,
     prebuild_chapter_graph_records,
     req_timeline_focus_id,
+    uses_new_timeline_event_for_chapter,
 )
 from webapp.backend.schemas import CreateNovelRequest, RunModeRequest
 from webapp.backend.sse import sse_pack
@@ -43,9 +46,16 @@ def _sync_after_run_if_event(novel_id: str, req: RunModeRequest, chapter_index: 
         return
     st_now = load_state(novel_id)
     if st_now:
-        st_now = apply_chapter_event_selection(st_now, int(chapter_index), req)
+        st_now, inserted_eid = apply_chapter_event_selection(st_now, int(chapter_index), req)
         save_state(novel_id, st_now)
         ensure_graph_tables(novel_id)
+        if inserted_eid:
+            patch_new_event_timeline_next_edges(
+                novel_id,
+                inserted_eid,
+                new_event_prev_id=req.new_event_prev_id,
+                new_event_next_id=req.new_event_next_id,
+            )
         replace_timeline_next_edges_from_state(novel_id, st_now)
 
 
@@ -205,6 +215,7 @@ def run_mode(novel_id: str, req: RunModeRequest) -> Dict[str, Any]:
             lore_tags=req.lore_tags,
             llm_options=llm_call_options(req),
             timeline_event_focus_id=req_timeline_focus_id(req),
+            omit_world_timeline=uses_new_timeline_event_for_chapter(req),
         )
     except Exception as e:
         logger.exception("run_mode failed novel_id=%s mode=%s", novel_id, req.mode)
@@ -250,6 +261,7 @@ def preview_mode_input(novel_id: str, req: RunModeRequest) -> Dict[str, Any]:
             supporting_character_ids=(req.supporting_character_ids or []),
             lore_tags=req.lore_tags,
             timeline_event_focus_id=req_timeline_focus_id(req),
+            omit_world_timeline=uses_new_timeline_event_for_chapter(req),
         )
     except Exception as e:
         logger.exception("preview_input failed novel_id=%s mode=%s", novel_id, req.mode)
@@ -274,6 +286,7 @@ def run_mode_stream(novel_id: str, req: RunModeRequest, request: Request):
             pov_ids = [req.pov_character_id_override]
         llm_user_task = build_llm_user_task(novel_id, req.user_task, req, inferred, pov_ids)
         llm_opts = llm_call_options(req)
+        omit_world_timeline = uses_new_timeline_event_for_chapter(req)
 
         try:
             if req.mode in {"write_chapter", "revise_chapter", "expand_chapter"}:
@@ -311,6 +324,7 @@ def run_mode_stream(novel_id: str, req: RunModeRequest, request: Request):
                     lore_tags=req.lore_tags,
                     llm_options=llm_opts,
                     timeline_event_focus_id=req_timeline_focus_id(req),
+                    omit_world_timeline=omit_world_timeline,
                 ):
                     if await _disconnected():
                         logger.info(
@@ -331,7 +345,9 @@ def run_mode_stream(novel_id: str, req: RunModeRequest, request: Request):
                     plan.next_state = NovelAgent.merge_state(st, plan.next_state)  # type: ignore
                 except Exception as e:
                     logger.warning("merge_state failed in stream save: %s", e)
-                plan.next_state = apply_chapter_event_selection(plan.next_state, chapter_index, req)
+                plan.next_state, inserted_timeline_eid = apply_chapter_event_selection(
+                    plan.next_state, chapter_index, req
+                )
 
                 yield sse_pack("phase", {"name": "writing", "chapter_index": chapter_index})
                 parts: List[str] = []
@@ -349,6 +365,7 @@ def run_mode_stream(novel_id: str, req: RunModeRequest, request: Request):
                     llm_options=llm_opts,
                     timeline_event_focus_id=req_timeline_focus_id(req),
                     write_mode=write_mode,
+                    omit_world_timeline=omit_world_timeline,
                 ):
                     if await _disconnected():
                         logger.info(
@@ -392,6 +409,9 @@ def run_mode_stream(novel_id: str, req: RunModeRequest, request: Request):
                     chapter=record,
                     next_state=next_state,
                     chapter_preset_name=req.chapter_preset_name,
+                    new_timeline_event_id=inserted_timeline_eid,
+                    new_event_prev_id=req.new_event_prev_id,
+                    new_event_next_id=req.new_event_next_id,
                 )
 
                 try:
@@ -427,6 +447,11 @@ def run_mode_stream(novel_id: str, req: RunModeRequest, request: Request):
                     logger.warning("Failed to generate next_status (stream): %s", e)
                     yield sse_pack("phase", {"name": "next_status_failed", "error": str(e)})
 
+                st_done = load_state(novel_id)
+                chapter_timeline_event_id = (
+                    resolve_chapter_timeline_event_id(st_done, record) if st_done else None
+                )
+
                 yield sse_pack(
                     "done",
                     {
@@ -436,8 +461,9 @@ def run_mode_stream(novel_id: str, req: RunModeRequest, request: Request):
                         "state_updated": True,
                         "usage_metadata": usage_meta,
                         "plan": plan.model_dump(mode="json"),
-                        "state": (load_state(novel_id).model_dump(mode="json") if load_state(novel_id) else None),
+                        "state": (st_done.model_dump(mode="json") if st_done else None),
                         "next_status": next_status or None,
+                        "chapter_timeline_event_id": chapter_timeline_event_id,
                     },
                 )
             elif req.mode == "optimize_suggestions":
@@ -514,6 +540,7 @@ def run_mode_stream(novel_id: str, req: RunModeRequest, request: Request):
                     lore_tags=req.lore_tags,
                     llm_options=llm_opts,
                     timeline_event_focus_id=req_timeline_focus_id(req),
+                    omit_world_timeline=omit_world_timeline,
                 )
                 _sync_after_run_if_event(novel_id, req, result.chapter_index)
                 state_obj = load_state(novel_id)

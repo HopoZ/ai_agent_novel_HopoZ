@@ -1,0 +1,16 @@
+[project]
+name = "novelh-mobile"
+version = "0.1.0"
+description = "DeepSeek 流式对话（lore + API Key），可 flet build apk"
+requires-python = ">=3.10"
+dependencies = [
+    "flet>=0.24.0",
+    "httpx>=0.27.0",
+]
+
+[tool.flet]
+org = "com.novelh"
+product = "NovelH Chat"
+
+[tool.flet.app]
+path = "src"

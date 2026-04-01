@@ -5,12 +5,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from agents.persistence.graph_tables import (
     ensure_graph_tables,
     load_event_relations,
     new_timeline_event_id,
+    patch_new_event_timeline_next_edges,
     replace_timeline_next_edges_from_state,
     save_character_entities,
     save_event_relations,
@@ -21,6 +22,17 @@ from agents.persistence.graph_tables import (
 from agents.persistence.storage import load_chapter, load_state, save_state
 from agents.state.state_models import NovelState, TimelineEvent
 from webapp.backend.schemas import RunModeRequest
+
+
+def uses_new_timeline_event_for_chapter(req: RunModeRequest) -> bool:
+    """
+    章节归属为「新建事件」（填了 time_slot+summary）且未选已有 ev:timeline 时返回 True。
+    用于压缩 state 注入：此类运行无 focus，可不向模型附带 world.timeline。
+    """
+    existing = (req.existing_event_id or "").strip()
+    if existing.startswith("ev:timeline:"):
+        return False
+    return bool((req.new_event_time_slot or "").strip() and (req.new_event_summary or "").strip())
 
 
 def resolve_anchor_time_slot(novel_id: str, anchor_id: Optional[str]) -> Optional[str]:
@@ -96,24 +108,27 @@ def llm_call_options(req: RunModeRequest) -> Optional[Dict[str, Any]]:
     return opts or None
 
 
-def apply_chapter_event_selection(next_state: NovelState, chapter_index: int, req: RunModeRequest) -> NovelState:
+def apply_chapter_event_selection(
+    next_state: NovelState, chapter_index: int, req: RunModeRequest
+) -> Tuple[NovelState, Optional[str]]:
     """
     时间线侧：不再把「章号」写入 timeline。
     - existing_event_id：不再改 state（章节与时间线对齐仅靠 time_slot）
     - new_event_*：仍可在列表中插入新事件（无 chapter_index 字段）
+    返回 (state, 若本次插入了新时间线事件则为其 event_id，否则 None)。
     """
     tl = list(next_state.world.timeline or [])
 
     existing_idx = timeline_index_for_node_id(next_state, req.existing_event_id)
     if existing_idx is not None and 0 <= existing_idx < len(tl):
         next_state.world.timeline = tl
-        return next_state
+        return next_state, None
 
     new_slot = str(req.new_event_time_slot or "").strip()
     new_summary = str(req.new_event_summary or "").strip()
     if not (new_slot and new_summary):
         next_state.world.timeline = tl
-        return next_state
+        return next_state, None
 
     prev_idx = timeline_index_for_node_id(next_state, req.new_event_prev_id)
     next_idx = timeline_index_for_node_id(next_state, req.new_event_next_id)
@@ -126,16 +141,17 @@ def apply_chapter_event_selection(next_state: NovelState, chapter_index: int, re
         insert_at = min(insert_at, next_idx)
     insert_at = max(0, min(insert_at, len(tl)))
 
+    new_eid = new_timeline_event_id()
     tl.insert(
         insert_at,
         TimelineEvent(
-            event_id=new_timeline_event_id(),
+            event_id=new_eid,
             time_slot=new_slot,
             summary=new_summary,
         ),
     )
     next_state.world.timeline = tl
-    return next_state
+    return next_state, new_eid
 
 
 def build_llm_user_task(
@@ -209,9 +225,14 @@ def build_llm_user_task(
             prev_id = str(req.new_event_prev_id or "").strip()
             next_id = str(req.new_event_next_id or "").strip()
             if prev_id:
-                lines.append(f"新事件前置事件（可选）：{_event_desc(prev_id)}")
+                lines.append(f"新事件前置时间线（用户指定）：{_event_desc(prev_id)}")
             if next_id:
-                lines.append(f"新事件后置事件（可选）：{_event_desc(next_id)}")
+                lines.append(f"新事件后置时间线（用户指定）：{_event_desc(next_id)}")
+            if not prev_id and not next_id:
+                lines.append(
+                    "新事件未指定时间线前后沿：图谱不自动添加 timeline_next，仅插入时间线列表；"
+                    "顺序与因果以本章任务描述为准"
+                )
         else:
             lines.append("章节归属时间线：未显式指定（按系统推导/默认流程）")
 
@@ -224,6 +245,10 @@ def build_llm_user_task(
     supporting_ids = [str(x).strip() for x in (req.supporting_character_ids or []) if str(x).strip()]
     if supporting_ids:
         lines.append(f"重点涉及角色：{', '.join(supporting_ids)}")
+
+    current_map = str(req.current_map or "").strip()
+    if current_map:
+        lines.append(f"当前地图：{current_map}")
 
     lore_tags = [str(x).strip() for x in (req.lore_tags or []) if str(x).strip()]
     if lore_tags:
@@ -262,8 +287,15 @@ def prebuild_chapter_graph_records(
         or ((req.new_event_time_slot or "").strip() and (req.new_event_summary or "").strip())
     )
     if has_event_selection:
-        st = apply_chapter_event_selection(st, chapter_index, req)
+        st, inserted_eid = apply_chapter_event_selection(st, chapter_index, req)
         save_state(novel_id, st)
+        if inserted_eid:
+            patch_new_event_timeline_next_edges(
+                novel_id,
+                inserted_eid,
+                new_event_prev_id=req.new_event_prev_id,
+                new_event_next_id=req.new_event_next_id,
+            )
         replace_timeline_next_edges_from_state(novel_id, st)
 
     major_chars = [str(x).strip() for x in (pov_ids or []) if str(x).strip()]

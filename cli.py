@@ -58,7 +58,7 @@ class WritingAgent:
             else "当前注入：全部 lores md 原文"
         )
         system_instruction = f"""你是一个顶尖的网文创作Agent。
-你的创作必须【严丝合缝】地符合以下百科设定的框架。
+你的创作必须【严丝合缝】地符合以下百科设定的框架输出文本，不要 markdown 格式。
 
 {lore_context}
 

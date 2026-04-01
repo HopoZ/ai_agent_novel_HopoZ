@@ -1,173 +1,142 @@
+# AI Novel Agent
+
+面向长篇网文 / 系列叙事的工程化写作系统：以 `lores/` 下 Markdown 为设定来源，用 **plan → write → state 更新 → 持久化** 形成可迭代的创作闭环；提供 **FastAPI + Vue 3** 的 Web 工作台（Input 预览、SSE 流式输出、知识图谱编辑），以及可选的终端 CLI 与 Flet 移动端示例。
+
+**预览**
+
+| Web 工作台 | 知识图谱 |
+|-----------|---------|
+| ![Web](./images/网页端.jpg) | ![Graph](./images/图谱.jpg) |
+
+---
+
+## 技术栈
+
+| 层级 | 技术 |
+|------|------|
+| 前端 | Vue 3、TypeScript、Vite、Element Plus、ECharts |
+| 后端 | Python 3、FastAPI、LangChain（DeepSeek API） |
+| 领域 | `NovelAgent`、状态压缩与合并、图谱四表持久化、Lore 摘要缓存 |
+
+---
+
 ## 快速开始
 
-###  安装依赖
+### 1. 安装依赖
+
 ```bash
 pip install -r requirements.txt
 ```
 
-###  配置密钥
-在项目根目录创建 `.env`：
+### 2. 配置 API 密钥
+
+在仓库根目录创建 `.env`：
+
 ```bash
 DEEPSEEK_API_KEY=<your_api_key>
 ```
 
-###  准备设定
-把 Markdown 设定放入 `lores/`（目录路径即标签空间）。
+### 3. 准备设定
 
-###  启动服务
+将 Markdown 设定放入 `lores/`（相对路径即标签空间，供勾选与注入）。
+
+### 4. 启动 Web（推荐）
+
+在**仓库根目录**执行：
+
 ```bash
 python -m uvicorn webapp.backend.server:app --reload --port 8000
 ```
-访问：`http://127.0.0.1:8000/`
 
-### cli版启动服务
+浏览器访问：`http://127.0.0.1:8000/`
+
+- 启动时会尝试构建前端（`webapp/frontend` → `dist/`）。若已自行构建或想跳过：设置环境变量 `SKIP_FRONTEND_BUILD=1`。
+- 单独开发前端：`cd webapp/frontend && npm install && npm run dev`（代理与端口以 `vite.config.ts` 为准）。
+
+### 5. 终端 CLI（可选）
+
+不经过 Web 状态机，仅多轮对话 + Lore 原文注入：
+
 ```bash
 python -m cli
 ```
 
+---
 
-## AI Novel Agent
+## 功能要点
 
-一个面向长篇网文/系列叙事的工程化写作系统。  
-系统以 `lores/*.md` 作为设定单一真实来源（SSOT），围绕 `plan -> write -> state update -> persist` 建立可持续迭代的创作闭环，并提供可观测、可回放、可维护的 Web 写作工作流。
+- **先预览再运行**：主流程先请求 `preview_input`，确认后再 `run_stream`，减少误触耗 token。
+- **流式与可中止**：规划 / 正文 / 优化建议等 SSE 阶段可观察；可中止以节省 token。
+- **下章续写**：写章、修订、扩写或优化完成后可弹出「下章提示」，确认后沿用「生成正文」同款预览链，并尽量自动绑定本章时间线事件。
+- **图谱**：人物 / 事件 / 混合视图，全屏编辑节点与边（数据落在 `storage/novels/<id>/` 四表）。
+- **前端适配**：窄屏（约 ≤1180px）三栏纵向堆叠；宽屏下随窗口压缩左/中栏宽度，减少横向滚动；中间表单区折叠为手风琴（一次只展开一块）。
 
-项目预览:
-![](./images/网页端.jpg)
-![](./images/图谱.jpg)
+---
 
-##  设计目标
+## 运行模式（`RunModeRequest.mode`）
 
-- **连续性优先**：写作不是“一次性生成”，而是状态机驱动的长期演进
-- **设定优先**：设定文件化、标签化、可控注入，避免设定漂移
-- **可观测优先**：输入预览、阶段事件、token 消耗全链路可见
-- **失败可恢复**：结构化输出 + patch 合并，减少长输出导致的崩溃
+| 模式 | 说明 |
+|------|------|
+| `init_state` | 初始化世界（写作前需已初始化） |
+| `plan_only` | 仅章节规划并更新状态 |
+| `write_chapter` | 规划 + 正文 + 落盘 |
+| `revise_chapter` | 修订（沿用规划 + 写作链路） |
+| `expand_chapter` | 扩写（写作阶段为 expand） |
+| `optimize_suggestions` | 优化建议（独立链路，非整章落盘主链） |
 
-##  系统能力矩阵
+---
 
-###  叙事状态管理（Stateful Narrative Engine）
-- 通过 `NovelState` 维持运行态连续性摘要：
-  - 人物状态（关系、目标、已知事实、位置）
-  - 世界规则（规则、阵营、开放问题）
-  - 时间线（timeline）
-  - 连续性约束（time_slot / POV / 出场角色）
-- 存储路径：`storage/novels/<novel_id>/state.json`
-- 重要：`state.json` 是**运行态摘要/快照**，人物/事件关系的**真源**来自图谱表（见「关键数据资产」）
-
-###  写作链路（Plan + Draft）
-- `plan_chapter` 生成结构化 `ChapterPlan`
-- `write_chapter_text(_stream)` 生成正文（支持流式输出）
-- 写作结果结构化落盘：`storage/novels/<id>/chapters/*.json`
-- 同步输出纯文本归档：`outputs/*.txt`
-
-###  Lore 摘要与注入策略
-- 摘要由 LLM 生成（非规则抽取）
-- 摘要缓存按 **单 tag 粒度**：`llm_tag_v1`
-- 运行链路使用 `lore_tags`，不依赖 `lore_summary_id`
-- 注入策略：
-  1. 优先命中每个 tag 的摘要缓存
-  2. 未命中则回退该 tag 原文（信息不丢）
-- 摘要接口返回结构化结果：`tag_summaries: [{ tag, summary }]`
-
-###  上下文压缩策略
-- 默认仅注入相邻相关两章
-- 手动设置 `time_slot_override` 时，不注入章节 JSON 上下文
-- 章节 JSON `content` 不作为核心上下文输入，避免 token 爆炸
-
-###  可观测性与交互
-- SSE 阶段事件：`planning -> writing -> saving -> done`
-- 前端单按钮流程：先生成 Input 预览，再确认运行（避免“填完直接烧 token”）
-- `/preview_input` 可查看本次真实拼装输入
-- 悬浮预览 `compact=1` 显示 tag 摘要（无缓存提示先生成）
-- 图谱视图：`people / events / mixed`
-- 右侧输出：正文/规划流/下章建议均为流式增量，并支持**自动滚动到底**
-- 支持前端中止生成（中止后端尽快停止，以节省 token）
-
-##  运行模式
-
-| Mode | 语义 |
-|---|---|
-| `init_state` | 初始化世界状态（显式执行；写作链路不会自动初始化） |
-| `plan_only` | 仅生成章节规划并推进状态 |
-| `write_chapter` | 规划 + 正文生成 + 落盘 |
-| `revise_chapter` | 修订（当前沿用规划+写作链路） |
-
-注意：若 `state.meta.initialized=false`，写作链路会直接报错提示先初始化（避免“隐式初始化造成规划/写作上下文冲突”）。
-
-##  架构分层
+## 仓库结构（简）
 
 ```text
-[Presentation]
-Vue3 + Element Plus + ECharts（说明见 `webapp/frontend/README.md`）
-  - 标签树/角色选择/输入预览
-  - SSE 流式正文
-  - 图谱可视化（全屏查看 + 节点/边编辑）
-        |
-        v
-[API]
-FastAPI（`python -m uvicorn webapp.backend.server:app`，目录说明见 `webapp/backend/README.md`）
-  - /api/novels/*
-  - /api/lore/*
-  - /api/novels/*/graph
-  - /api/novels/*/run_stream
-        |
-        v
-[Domain]
-NovelAgent 与周边模块（完整分包见 `agents/README.md`）
-  - 入口 `from agents.novel import NovelAgent`
-  - build_lore_summary_llm
-  - plan_chapter / write_chapter_text
-  - merge_state
-  - preview_input
-        |
-        v
-[Data]
-lores/*.md
-storage/lore_summaries/*.json
-storage/novels/<id>/{state.json, chapters/*.json, character_entities.json, character_relations.json, event_entities.json, event_relations.json}
-outputs/*.txt
+agents/              # 领域：NovelAgent、状态、提示词、持久化、Lore
+webapp/backend/      # FastAPI：路由、SSE、schemas、run_helpers、graph_payload
+webapp/frontend/     # Vue 3 工作台源码
+lores/               # 设定 Markdown（可按 .gitignore 决定是否入库）
+storage/             # 运行数据、摘要缓存、按小说分目录
+outputs/             # 正文归档
+cli.py               # 终端入口
+mobile/              # Flet 客户端示例
 ```
 
-##  关键数据资产
+---
 
-- `lores/**/*.md`：静态设定源
-- `storage/lore_summaries/*.json`：tag 摘要缓存
-- `storage/novels/<id>/state.json`：运行态摘要（供模型连续性使用，**非关系真源**）
-- `storage/novels/<id>/chapters/*.json`：章节结构化记录（每章一表，source-of-truth 用于刷新运行态摘要字段）
-- `storage/novels/<id>/character_entities.json`：人物实体表
-- `storage/novels/<id>/character_relations.json`：人物关系表
-- `storage/novels/<id>/event_entities.json`：事件实体表
-- `storage/novels/<id>/event_relations.json`：事件关系表
-- `outputs/*.txt`：正文归档
+## 数据与接口（摘要）
 
-##  接口总览（高频）
+持久化要点：
 
-- `POST /api/lore/summary/build`
-  - 入参：`{ tags: string[], force?: boolean }`
-  - 返回：`tag_summaries`
-- `GET /api/lore/preview?tag=...&compact=1`
-  - 返回指定 tag 摘要预览
-- `POST /api/novels/{novel_id}/run_stream`
-  - SSE 流式执行
-- `POST /api/novels/{novel_id}/preview_input`
-  - 返回本次组装输入（不调用模型）
+- **章节与结构化字段**：`storage/novels/<id>/chapters/*.json`
+- **运行态摘要**：`storage/novels/<id>/state.json`（关系类事实以四表为准）
+- **图谱四表**：`character_*`、`event_*` 等 JSON，与 API `GET/PATCH/POST/DELETE /api/novels/{id}/graph*` 对应
 
+常用 HTTP 示例：
 
-##  常见问题
+- `POST /api/lore/summary/build`、`GET /api/lore/tags`、`GET /api/lore/preview`
+- `POST /api/novels/{id}/preview_input`、`POST /api/novels/{id}/run_stream`（SSE）
+- `POST /api/novels/{id}/run`（非流式 JSON）
 
-###  为什么 token 依然偏高
-- lore 体积仍可能较大（尤其未命中摘要缓存时）
-- 任务描述过长会放大 state/lore 注入体积
-- 建议先生成 tag 摘要，再执行章节生成
+完整字段与行为以代码为准：`webapp/backend/schemas.py`、`agents/`、`storage/` 下说明（若仓库中包含对应文档）。
 
-##  工程实践建议
+---
 
-- **先摘要后写作**：先执行“生成当前Tag摘要”，再运行章节生成
-- **按章控范围**：每章任务仅描述本章目标，避免跨多章超大任务
-- **以四表为关系事实源**：人物/事件实体与关系使用四表，`state.json` 用作运行态摘要
-- **图谱先落表再生成**：章节“归属事件 + 关联人物”的选择应先写入图谱表，再进入 plan/write（减少 LLM 自行绑定造成的不一致）
+## 设计取向（简）
 
-##  许可证
+- **连续性**：状态机驱动，而非单次生成即弃。
+- **设定可控**：标签化 Lore，摘要缓存 + 未命中回退原文。
+- **可观测**：阶段事件、token 提示、Input 可预览。
+- **稳健**：结构化输出与合并策略，降低长输出失败成本。
 
-- AGPL-3.0-or-later 见[./LICENSE](./LICENSE)
-- 作者信息见 [./NOTICE](./NOTICE)
+实践建议：先为常用 tag 生成摘要再写章；按章收敛任务；人物与事件关系以图谱表为事实源，再进入生成。
 
+---
+
+## 路线图
+
+功能进度与计划见 [TOURMAP.md](./TOURMAP.md)。
+
+---
+
+## 许可证与作者
+
+- **许可证**：AGPL-3.0-or-later，见 [LICENSE](./LICENSE)。
+- **作者**：见 [NOTICE](./NOTICE)。

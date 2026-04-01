@@ -1,8 +1,15 @@
 <template>
-  <div class="wrap">
-    <h2 class="header">AI 小说创作代理（稳定写小说）</h2>
+  <div class="app-literary">
+    <div class="wrap">
+      <header class="app-header">
+        <div class="app-header-text">
+          <p class="app-tagline">规划 · 写作 · 图谱</p>
+          <h1 class="app-title">AI 小说创作代理</h1>
+        </div>
+        <div class="app-header-accent" aria-hidden="true"></div>
+      </header>
 
-    <div class="main-layout">
+      <div class="main-layout" :class="{ 'main-layout--stack': layoutStacked }">
       <div class="left-pane" :style="{ width: `${leftPanelWidth}px` }">
         <TagPanel
           :tags-loading="tagsLoading"
@@ -26,8 +33,8 @@
           :form="form"
           :default-llm-temperature="DEFAULT_LLM_TEMPERATURE"
           :default-llm-max-tokens="DEFAULT_LLM_MAX_TOKENS"
-          :mid-active-sections="midActiveSections"
-          :on-mid-sections-change="onMidSectionsChange"
+          :mid-active-section="midActiveSection"
+          :on-mid-section-change="onMidSectionChange"
           :novels-loading="novelsLoading"
           :novels="novels"
           :current-novel-title="currentNovelTitle"
@@ -70,6 +77,7 @@
           :novel-id="form.novelId"
         />
       </div>
+      </div>
     </div>
   </div>
 
@@ -104,6 +112,13 @@
     @add="addCharacterTag"
     @remove="removeCharacterTag"
   />
+
+  <NextChapterHintDialog
+    v-model="nextChapterHintVisible"
+    v-model:draft="nextChapterHintDraft"
+    :previewing-input="previewingInput"
+    @confirm="confirmNextChapterFromHint"
+  />
 </template>
 
 <script lang="ts" setup>
@@ -120,6 +135,7 @@ import TextPreviewDialog from "./components/dialogs/TextPreviewDialog.vue";
 import CreateNovelDialog from "./components/dialogs/CreateNovelDialog.vue";
 import InputPreviewDialog from "./components/dialogs/InputPreviewDialog.vue";
 import RoleManagerDialog from "./components/dialogs/RoleManagerDialog.vue";
+import NextChapterHintDialog from "./components/dialogs/NextChapterHintDialog.vue";
 
 type AppRunMode =
   | "init_state"
@@ -129,7 +145,8 @@ type AppRunMode =
   | "expand_chapter"
   | "optimize_suggestions";
 
-const { leftPanelWidth, midPanelWidth, startResizeLeft, startResizeMid } = usePanelResize();
+const { leftPanelWidth, midPanelWidth, layoutStacked, startResizeLeft, startResizeMid } =
+  usePanelResize();
 
 const tagsLoading = ref(true);
 const tags = ref<string[]>([]);
@@ -173,9 +190,10 @@ const dialogVisible = ref(false);
 const dialogTitle = ref("");
 const dialogText = ref("");
 const roleManagerVisible = ref(false);
-const midActiveSections = ref<Array<string>>(["basic", "timeline", "task"]);
-function onMidSectionsChange(v: string[]) {
-  midActiveSections.value = Array.isArray(v) ? v : [];
+/** 中间栏折叠：accordion 一次只展开一块（与 MidFormPanel el-collapse accordion 一致） */
+const midActiveSection = ref<string>("task");
+function onMidSectionChange(v: string | string[]) {
+  midActiveSection.value = Array.isArray(v) ? String(v[0] ?? "") : String(v ?? "");
 }
 function openRoleManager() {
   roleManagerVisible.value = true;
@@ -208,6 +226,13 @@ const pendingRunPayload = ref<unknown>(null);
 const pendingRunNovelId = ref("");
 const pendingRunStarting = ref(false);
 
+const nextChapterHintVisible = ref(false);
+const nextChapterHintDraft = ref("");
+/** 从「下章提示」写入任务并打开 Input 预览时，若用户关闭预览未运行，则恢复中间栏任务原文本 */
+const userTaskBeforePreviewFromNextChapter = ref<string | null>(null);
+/** 最近一次写章/修订/扩写完成后，本章归属的时间线事件 id（用于「下章提示 → 生成下一章」默认同属该事件） */
+const lastChapterTimelineEventId = ref("");
+
 const createForm = reactive<{
   novelTitle: string;
   startTimeSlot: string;
@@ -237,6 +262,8 @@ const form = reactive<{
   povCharacterOverride: string[];
   focusCharacterIds: string[];
   chapterPresetName: string;
+  /** 当前地图/场景，可选；随请求写入 current_map 并注入模型约束 */
+  currentMap: string;
   userTask: string;
   llmTemperature: number | null;
   llmTopP: number | null;
@@ -252,6 +279,7 @@ const form = reactive<{
   povCharacterOverride: [],
   focusCharacterIds: [],
   chapterPresetName: "",
+  currentMap: "",
   userTask: "",
   llmTemperature: DEFAULT_LLM_TEMPERATURE,
   llmTopP: null,
@@ -613,6 +641,7 @@ function buildRunPayload(runMode: AppRunMode) {
     pov_character_ids_override: (form.povCharacterOverride || []).filter(Boolean),
     supporting_character_ids: (form.focusCharacterIds || []).filter(Boolean),
     chapter_preset_name: form.chapterPresetName || null,
+    current_map: (form.currentMap || "").trim() || null,
     lore_tags: loreTags,
   };
   payload.llm_temperature =
@@ -720,6 +749,26 @@ async function executeRun(novelId: string, payload: Record<string, unknown>) {
         rightTab.value = "next";
       }
       refreshStreamText();
+
+      const modeStr = String(donePayload.mode || "");
+      const modesWithNextChapterHint = new Set([
+        "write_chapter",
+        "revise_chapter",
+        "expand_chapter",
+        "optimize_suggestions",
+      ]);
+      if (modesWithNextChapterHint.has(modeStr)) {
+        const prefill =
+          modeStr === "optimize_suggestions"
+            ? String(donePayload.content || "").trim()
+            : String(donePayload.next_status || "").trim();
+        nextChapterHintDraft.value = prefill;
+        nextChapterHintVisible.value = true;
+      }
+      const chTl = String(donePayload.chapter_timeline_event_id || "").trim();
+      if (chTl.startsWith("ev:timeline:")) {
+        lastChapterTimelineEventId.value = chTl;
+      }
     }
     await loadAnchors();
     if (graph.graphFullscreenVisible || rightTab.value === "graph") {
@@ -743,9 +792,9 @@ async function executeRun(novelId: string, payload: Record<string, unknown>) {
   }
 }
 
-async function startPreviewRun(runMode: AppRunMode) {
+async function startPreviewRun(runMode: AppRunMode): Promise<boolean> {
   const built = buildRunPayload(runMode);
-  if (!built) return;
+  if (!built) return false;
   previewingInput.value = true;
   runPhase.value = "idle";
   runHint.value = "正在生成本次 Input 预览...";
@@ -760,6 +809,11 @@ async function startPreviewRun(runMode: AppRunMode) {
     pendingRunNovelId.value = built.novelId;
     runHint.value = "Input 已生成，请在弹窗点击“确认并运行”";
     inputPreviewVisible.value = true;
+    return true;
+  } catch (e: unknown) {
+    const err = e as { message?: string };
+    ElMessage.error(`预览生成失败：${err?.message || String(e)}`);
+    return false;
   } finally {
     previewingInput.value = false;
   }
@@ -793,6 +847,62 @@ async function confirmRunFromPreview() {
     );
   } finally {
     pendingRunStarting.value = false;
+    userTaskBeforePreviewFromNextChapter.value = null;
+  }
+}
+
+async function fetchLatestChapterTimelineEventId(): Promise<string> {
+  const novelId = (form.novelId || "").trim();
+  if (!novelId) return "";
+  try {
+    const st = (await apiJson(
+      `/api/novels/${encodeURIComponent(novelId)}/state`,
+      "GET",
+      null
+    )) as { meta?: { current_chapter_index?: number } };
+    const idx = st?.meta?.current_chapter_index;
+    if (idx == null || typeof idx !== "number" || idx < 1) return "";
+    const ch = (await apiJson(
+      `/api/novels/${encodeURIComponent(novelId)}/chapters/${idx}`,
+      "GET",
+      null
+    )) as { timeline_event_id?: string | null };
+    const tid = String(ch?.timeline_event_id || "").trim();
+    return tid.startsWith("ev:timeline:") ? tid : "";
+  } catch {
+    return "";
+  }
+}
+
+async function confirmNextChapterFromHint() {
+  const t = String(nextChapterHintDraft.value || "").trim();
+  if (!t) {
+    ElMessage.error("请填写下章提示。");
+    return;
+  }
+  let bindId = (lastChapterTimelineEventId.value || "").trim();
+  if (!bindId.startsWith("ev:timeline:")) {
+    bindId = await fetchLatestChapterTimelineEventId();
+  }
+  if (bindId.startsWith("ev:timeline:")) {
+    form.eventMode = "existing";
+    form.existingEventId = bindId;
+    form.newEventTimeSlot = "";
+    form.newEventSummary = "";
+    form.newEventPrevId = "";
+    form.newEventNextId = "";
+  } else if (!(form.eventMode === "existing" && (form.existingEventId || "").trim())) {
+    ElMessage.error("未能自动绑定与本章相同的时间线事件，请在「时序」选择「归属到已有事件」后再生成下一章。");
+    return;
+  }
+  userTaskBeforePreviewFromNextChapter.value = form.userTask;
+  form.userTask = t;
+  nextChapterHintVisible.value = false;
+  const started = await startPreviewRun("write_chapter");
+  if (!started) {
+    form.userTask = userTaskBeforePreviewFromNextChapter.value;
+    userTaskBeforePreviewFromNextChapter.value = null;
+    nextChapterHintVisible.value = true;
   }
 }
 
@@ -836,37 +946,65 @@ onMounted(async () => {
 watch(
   () => form.novelId,
   async () => {
+    lastChapterTimelineEventId.value = "";
     await loadAnchors();
     await loadCharacterOptions();
   }
 );
+
+watch(inputPreviewVisible, (visible, prevVisible) => {
+  if (prevVisible && !visible && userTaskBeforePreviewFromNextChapter.value !== null) {
+    if (!pendingRunStarting.value) {
+      form.userTask = userTaskBeforePreviewFromNextChapter.value;
+      userTaskBeforePreviewFromNextChapter.value = null;
+    }
+  }
+});
 </script>
 
 <style scoped>
 .wrap {
-  max-width: 1400px;
+  width: 100%;
+  max-width: 1480px;
   margin: 0 auto;
-}
-.header {
-  margin-top: 0;
-  margin-bottom: 14px;
+  box-sizing: border-box;
+  min-width: 0;
 }
 .main-layout {
   display: flex;
   gap: 12px;
   align-items: stretch;
+  width: 100%;
+  min-width: 0;
+}
+.main-layout--stack {
+  flex-direction: column;
+}
+.main-layout--stack .resize-handle {
+  display: none;
+}
+.main-layout--stack .left-pane,
+.main-layout--stack .mid-pane,
+.main-layout--stack .right-pane {
+  width: 100% !important;
+  max-width: 100%;
+  min-width: 0 !important;
+  flex: 0 0 auto !important;
 }
 .left-pane {
   flex: 0 0 auto;
-  min-width: 280px;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .mid-pane {
   flex: 0 0 auto;
-  min-width: 360px;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .right-pane {
-  flex: 1 1 auto;
-  min-width: 420px;
+  flex: 1 1 0;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .resize-handle {
   width: 10px;

@@ -1,5 +1,7 @@
 # TOURMAP（项目进度地图）
 
+模块关系与数据真源见 [`ARCHITECTURE.md`](./ARCHITECTURE.md)；各目录内文件说明见对应 `README.md`。
+
 ## DONE（已完成）
 
 - [x] **知识图谱参与 Input 压缩**
@@ -23,6 +25,11 @@
   - 右侧状态文案对齐当前真实流程（移除 auto_init 误导信息）。
   - 规划流/正文流/下章建议的空态提示改为运行态动态提示。
   - 右侧输出新增**自动滚动到底**，无需手动拖动滚动条。
+
+- [x] **前端文学暖色主题与续章流程**
+  - `theme-literary.css`：纸感背景、Element 变量、顶栏与弹窗样式；`Noto Serif SC`（`index.html`）。
+  - 写作/优化等结束后「下章提示」弹窗 → 与「生成正文」相同的 Input 预览链。
+  - 表单可选「当前地图」→ `RunModeRequest.current_map` → `build_llm_user_task` 注入约束。
 
 ## TODO（待完成）
 

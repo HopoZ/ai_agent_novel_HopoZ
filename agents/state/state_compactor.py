@@ -53,6 +53,7 @@ def compact_state_for_prompt(
     max_chars: int = 9000,
     novel_id: Optional[str] = None,
     focus_timeline_event_id: Optional[str] = None,
+    omit_world_timeline: bool = False,
 ) -> str:
     rel_ids = select_related_character_ids(
         state=state,
@@ -89,7 +90,9 @@ def compact_state_for_prompt(
 
     timeline = list(state.world.timeline or [])
     picked_tl: list = []
-    if not minimal_context:
+    if omit_world_timeline:
+        picked_tl = []
+    elif not minimal_context:
         used_focus_slice = False
         if novel_id and focus_timeline_event_id:
             fid = str(focus_timeline_event_id).strip()
@@ -112,10 +115,35 @@ def compact_state_for_prompt(
                 picked_tl = [timeline[i] for i in sorted(idx_set)]
         if not used_focus_slice:
             picked_tl = timeline[-max(1, timeline_n) :]
-    if (not minimal_context) and time_slot_hint:
-        for t in timeline:
-            if time_slot_hint in (t.time_slot or "") and t not in picked_tl:
-                picked_tl.append(t)
+    # 仅当章节已「归属已有时间线事件」时，才按 time_slot 从全表补条目。
+    # 新建事件且未选上下沿时无 focus_timeline_event_id：若仍用 `hint in time_slot` 子串匹配，
+    # 会把凡含该片段的事件几乎全部拼进 prompt（token 暴涨、叙事干扰）。
+    if (
+        (not omit_world_timeline)
+        and (not minimal_context)
+        and time_slot_hint
+        and focus_timeline_event_id
+    ):
+        fid = str(focus_timeline_event_id).strip()
+        if timeline_index_for_node_id(state, fid) is not None:
+            hint = (time_slot_hint or "").strip()
+            if hint:
+
+                def _row_key(ev) -> tuple:
+                    eid = getattr(ev, "event_id", None) or ""
+                    if eid:
+                        return ("id", eid)
+                    return ("legacy", (ev.time_slot or "").strip(), (ev.summary or "").strip())
+
+                seen = {_row_key(x) for x in picked_tl}
+                for t in timeline:
+                    if (t.time_slot or "").strip() != hint:
+                        continue
+                    k = _row_key(t)
+                    if k in seen:
+                        continue
+                    picked_tl.append(t)
+                    seen.add(k)
 
     payload = {
         "meta": {

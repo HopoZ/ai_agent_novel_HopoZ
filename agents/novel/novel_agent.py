@@ -129,6 +129,7 @@ class NovelAgent:
         max_chars: int = 9000,
         novel_id: Optional[str] = None,
         focus_timeline_event_id: Optional[str] = None,
+        omit_world_timeline: bool = False,
     ) -> str:
         return compact_state_for_prompt_runtime(
             state=state,
@@ -142,6 +143,7 @@ class NovelAgent:
             max_chars=max_chars,
             novel_id=novel_id,
             focus_timeline_event_id=focus_timeline_event_id,
+            omit_world_timeline=omit_world_timeline,
         )
 
     def _format_state_for_prompt(self, state: NovelState, max_chars: int = 12000) -> str:
@@ -313,6 +315,7 @@ class NovelAgent:
         lore_summary_id: Optional[str] = None,
         llm_options: Optional[Dict[str, Any]] = None,
         timeline_event_focus_id: Optional[str] = None,
+        omit_world_timeline: bool = False,
     ) -> ChapterPlan:
         state = self._load_state_hydrated(novel_id)
         if not state:
@@ -339,6 +342,7 @@ class NovelAgent:
             strict_no_supporting=strict_no_supporting,
             novel_id=novel_id,
             focus_timeline_event_id=focus_eid,
+            omit_world_timeline=omit_world_timeline,
         )
         continuity_hint = {
             "time_slot_override": time_slot_override,
@@ -370,6 +374,7 @@ class NovelAgent:
         lore_summary_id: Optional[str] = None,
         llm_options: Optional[Dict[str, Any]] = None,
         timeline_event_focus_id: Optional[str] = None,
+        omit_world_timeline: bool = False,
     ) -> Iterator[Dict[str, Any]]:
         """
         流式生成章节规划（原始 JSON 文本）。
@@ -401,6 +406,7 @@ class NovelAgent:
             strict_no_supporting=strict_no_supporting,
             novel_id=novel_id,
             focus_timeline_event_id=focus_eid,
+            omit_world_timeline=omit_world_timeline,
         )
         continuity_hint = {
             "time_slot_override": time_slot_override,
@@ -469,6 +475,7 @@ class NovelAgent:
         llm_options: Optional[Dict[str, Any]] = None,
         timeline_event_focus_id: Optional[str] = None,
         write_mode: str = "generate",
+        omit_world_timeline: bool = False,
     ) -> Tuple[str, Dict[str, Any]]:
         state = self._load_state_hydrated(novel_id)
         if not state:
@@ -493,6 +500,7 @@ class NovelAgent:
             strict_no_supporting=strict_no_supporting,
             novel_id=novel_id,
             focus_timeline_event_id=focus_eid,
+            omit_world_timeline=omit_world_timeline,
         )
         system, human = build_write_chapter_prompt(
             user_task=user_task,
@@ -525,6 +533,7 @@ class NovelAgent:
         llm_options: Optional[Dict[str, Any]] = None,
         timeline_event_focus_id: Optional[str] = None,
         write_mode: str = "generate",
+        omit_world_timeline: bool = False,
     ) -> Iterator[Dict[str, Any]]:
         """
         流式生成章节正文。
@@ -555,6 +564,7 @@ class NovelAgent:
             strict_no_supporting=strict_no_supporting,
             novel_id=novel_id,
             focus_timeline_event_id=focus_eid,
+            omit_world_timeline=omit_world_timeline,
         )
         system, human = build_write_chapter_prompt(
             user_task=user_task,
@@ -698,6 +708,7 @@ class NovelAgent:
         lore_summary_id: Optional[str] = None,
         llm_options: Optional[Dict[str, Any]] = None,
         timeline_event_focus_id: Optional[str] = None,
+        omit_world_timeline: bool = False,
     ) -> RunResult:
         state = self._load_state_hydrated(novel_id)
         if not state:
@@ -751,6 +762,7 @@ class NovelAgent:
                 lore_summary_id=lore_summary_id,
                 llm_options=llm_options,
                 timeline_event_focus_id=timeline_event_focus_id,
+                omit_world_timeline=omit_world_timeline,
             )
             # 允许 plan.next_state 是“补丁”，这里合并成完整状态再落盘
             try:
@@ -801,6 +813,7 @@ class NovelAgent:
                 llm_options=llm_options,
                 timeline_event_focus_id=timeline_event_focus_id,
                 write_mode=write_mode,
+                omit_world_timeline=omit_world_timeline,
             )
 
             if mode == "revise_chapter":
@@ -874,6 +887,7 @@ class NovelAgent:
         lore_tags: Optional[list[str]] = None,
         lore_summary_id: Optional[str] = None,
         timeline_event_focus_id: Optional[str] = None,
+        omit_world_timeline: bool = False,
     ) -> Dict[str, Any]:
         """
         返回“本次运行将喂给模型的输入”预览，不调用模型、无落盘副作用。
@@ -956,6 +970,7 @@ class NovelAgent:
             strict_no_supporting=strict_no_supporting,
             novel_id=novel_id,
             focus_timeline_event_id=focus_eid,
+            omit_world_timeline=omit_world_timeline,
         )
         continuity_hint = {
             "time_slot_override": time_slot_override,

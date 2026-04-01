@@ -1,7 +1,11 @@
 <template>
   <el-card class="panel" shadow="never">
     <el-form label-position="top">
-      <el-collapse :model-value="midActiveSections" @update:model-value="onMidSectionsChange">
+      <el-collapse
+        accordion
+        :model-value="midActiveSection"
+        @update:model-value="onMidSectionChange"
+      >
         <el-collapse-item name="basic" title="基础">
           <div class="muted" style="margin-top:4px;">
             选择后会切换当前上下文（锚点/图谱/运行都基于当前小说）。
@@ -74,12 +78,12 @@
             <el-form-item label="新事件摘要（summary）">
               <el-input v-model="form.newEventSummary" type="textarea" :rows="3" placeholder="一句话描述该事件"></el-input>
             </el-form-item>
-            <el-form-item label="放在这个事件之后（可选）">
+            <el-form-item label="放在这个事件之后">
               <el-select
                 v-model="form.newEventPrevId"
                 :loading="anchorsLoading"
                 clearable
-                placeholder="选择前置事件（prev）"
+                placeholder="不选则无前驱 timeline_next 边"
                 style="width:100%;"
               >
                 <el-option
@@ -90,12 +94,12 @@
                 />
               </el-select>
             </el-form-item>
-            <el-form-item label="放在这个事件之前（可选）">
+            <el-form-item label="放在这个事件之前">
               <el-select
                 v-model="form.newEventNextId"
                 :loading="anchorsLoading"
                 clearable
-                placeholder="选择后置事件（next）"
+                placeholder="不选则无后继 timeline_next 边"
                 style="width:100%;"
               >
                 <el-option
@@ -106,6 +110,9 @@
                 />
               </el-select>
             </el-form-item>
+            <div class="muted" style="margin-top:4px;">
+              上下沿仅写你选中的关系；都不选则图谱不自动按列表顺序连 timeline_next，仅插入时间线条目。
+            </div>
           </template>
           <div class="muted" style="margin-top:6px;">
             预计本章时间段：{{ inferredTimeSlotHint || "（等待选择事件）" }}
@@ -218,6 +225,17 @@
         </el-collapse-item>
 
         <el-collapse-item name="task" title="本章任务">
+          <el-form-item label="当前地图（可选）">
+            <el-input
+              v-model="form.currentMap"
+              type="textarea"
+              :rows="3"
+              placeholder="例如：青石镇东市、地下遗迹二层、星舰舰桥——会作为「系统注入约束」一并发给模型"
+            />
+            <div class="muted" style="margin-top:6px;">
+              留空则不发；填写后会在规划/正文等与任务合并，可在 Input 预览里看到完整 Human。
+            </div>
+          </el-form-item>
           <el-form-item label="任务 / 素材">
             <el-input
               v-model="form.userTask"
@@ -253,7 +271,7 @@ defineProps<{
   form: any;
   defaultLlmTemperature: number;
   defaultLlmMaxTokens: number;
-  midActiveSections: string[];
+  midActiveSection: string;
   novelsLoading: boolean;
   novels: Array<{ novel_id: string; novel_title: string }>;
   currentNovelTitle: string;
@@ -263,7 +281,7 @@ defineProps<{
   inferredTimeSlotHint: string;
   allCharacterOptions: string[];
   previewingInput: boolean;
-  onMidSectionsChange: (v: string[]) => void;
+  onMidSectionChange: (v: string | string[]) => void;
   openCreateDialog: () => void;
   onPovChange: (v: any) => void;
   onFocusChange: (v: any) => void;

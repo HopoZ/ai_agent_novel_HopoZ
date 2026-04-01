@@ -570,17 +570,61 @@ def replace_appear_edges_for_chapter(novel_id: str, chapter: ChapterRecord) -> N
     save_event_relations(novel_id, rows)
 
 
+def patch_new_event_timeline_next_edges(
+    novel_id: str,
+    new_event_id: str,
+    new_event_prev_id: Optional[str] = None,
+    new_event_next_id: Optional[str] = None,
+) -> None:
+    """
+    新建时间线事件后，仅按用户显式选择的「上一事件 / 下一事件」写入 timeline_next。
+    未选择的沿不补边；不再依赖 state 列表顺序推断邻接。
+    - 若指定 prev：删除原图中 source==prev 的 timeline_next，再写 prev -> new
+    - 若指定 next：删除原图中 target==next 的 timeline_next，再写 new -> next
+    """
+    new_id = (new_event_id or "").strip()
+    prev_id = (new_event_prev_id or "").strip()
+    next_id = (new_event_next_id or "").strip()
+    if not new_id:
+        return
+    rows = load_event_relations(novel_id)
+    other: List[Dict[str, Any]] = []
+    tl_keep: List[Dict[str, Any]] = []
+    for r in rows:
+        if str(r.get("kind", "")).strip().lower() != "timeline_next":
+            other.append(r)
+            continue
+        src = str(r.get("source", "")).strip()
+        tgt = str(r.get("target", "")).strip()
+        if prev_id and src == prev_id:
+            continue
+        if next_id and tgt == next_id:
+            continue
+        tl_keep.append(r)
+
+    additions: List[Dict[str, Any]] = []
+    if prev_id:
+        additions.append(
+            {"source": prev_id, "target": new_id, "label": "时间推进", "kind": "timeline_next"}
+        )
+    if next_id:
+        additions.append(
+            {"source": new_id, "target": next_id, "label": "时间推进", "kind": "timeline_next"}
+        )
+
+    save_event_relations(novel_id, other + tl_keep + additions)
+
+
 def replace_timeline_next_edges_from_state(novel_id: str, state: NovelState) -> None:
     """
     根据 state.world.timeline 同步 timeline_next 事件关系边：
-    - 保留已有手工边（含空 target 的“待定”草稿）
-    - 仅为缺失下跳的节点补默认顺序边（按列表顺序，稳定 id 端点）
+    - 保留已有边（含空 target 的“待定”草稿）
     - 清理指向已不存在 timeline 节点的边
+    - 不再按列表顺序自动补「相邻即下一条」的边（新建事件未选手动上下沿时保持无 timeline_next）
     """
     ensure_timeline_stable_ids(novel_id, state)
     rows = load_event_relations(novel_id)
     timeline = list(state.world.timeline or [])
-    timeline_len = len(timeline)
     valid: set[str] = {(ev.event_id or "").strip() for ev in timeline if (ev.event_id or "").strip()}
 
     kept_timeline_rows: List[Dict[str, Any]] = []
@@ -626,22 +670,6 @@ def replace_timeline_next_edges_from_state(novel_id: str, state: NovelState) -> 
             }
         )
 
-    for idx in range(0, max(0, timeline_len - 1)):
-        a = (timeline[idx].event_id or "").strip()
-        b = (timeline[idx + 1].event_id or "").strip()
-        if not a or not b:
-            continue
-        if a in used_sources:
-            continue
-        kept_timeline_rows.append(
-            {
-                "source": a,
-                "target": b,
-                "label": "时间推进",
-                "kind": "timeline_next",
-            }
-        )
-
     rows = other_rows + kept_timeline_rows
     save_event_relations(novel_id, rows)
 
@@ -651,12 +679,19 @@ def persist_chapter_artifacts(
     chapter: ChapterRecord,
     next_state: NovelState,
     chapter_preset_name: Optional[str] = None,
+    *,
+    new_timeline_event_id: Optional[str] = None,
+    new_event_prev_id: Optional[str] = None,
+    new_event_next_id: Optional[str] = None,
 ) -> None:
     """
     正文 API 的统一落盘入口：
     1) 保存章节
     2) 保存 next_state（state.json 不含 relationships 真源）
     3) 同步四表侧：人物/事件实体行、appear 边、timeline_next 边
+
+    若本 run 在 state 中插入了新建时间线事件，传入 new_timeline_event_id 及可选 prev/next，
+    以便在 replace 前写入显式 timeline_next（未选则不写）。
     """
     save_chapter(novel_id, chapter, chapter_preset_name=chapter_preset_name)
 
@@ -692,6 +727,13 @@ def persist_chapter_artifacts(
     )
     replace_appear_edges_for_chapter(novel_id, chapter)
     replace_chapter_belongs_for_chapter(novel_id, next_state, chapter)
+    if new_timeline_event_id:
+        patch_new_event_timeline_next_edges(
+            novel_id,
+            new_timeline_event_id,
+            new_event_prev_id=new_event_prev_id,
+            new_event_next_id=new_event_next_id,
+        )
     replace_timeline_next_edges_from_state(novel_id, next_state)
 
 

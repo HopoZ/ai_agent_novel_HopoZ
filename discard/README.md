@@ -1,12 +1,11 @@
-这里是项目的“丢弃/归档”目录。
+# `discard/` — 归档说明
+
+存放已被主流程替代或不再引用的实验代码、旧静态页、临时脚本等。
+
+**当前主流程涉及的目录与分层**见仓库根目录 [`../ARCHITECTURE.md`](../ARCHITECTURE.md)。
 
 放入原则：
-- 已被新架构替代（例如旧版前端静态页、旧版脚本示例）
-- 空占位文件（未被当前 Web 后端/前端引用）
-- 临时测试脚本（不再作为主流程的一部分）
 
-当前主流程（仍在使用）：
-- 后端 API：`webapp/backend/`（ASGI 模块 `server:app`；说明见 `README.md`）
-- 核心引擎：`agents/novel/`、`agents/state/`、`agents/prompt/`；持久化 `agents/persistence/`；设定 `agents/lore/`
-- 前端（Vite/Vue）：`webapp/frontend/src/*`（build 到 `webapp/frontend/dist` 并由后端托管）
-
+- 新架构已替代的实现
+- 空占位或未再被后端/前端引用的文件
+- 临时测试脚本（不作为主流程一部分）

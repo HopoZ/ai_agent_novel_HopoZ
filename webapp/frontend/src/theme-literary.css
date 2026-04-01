@@ -1,0 +1,231 @@
+/**
+ * 文学暖色主题：纸感背景、墨色文字、青灰点缀（覆盖 Element Plus 局部变量）
+ */
+:root {
+  --lit-ink: #2a2318;
+  --lit-ink-muted: #5c5348;
+  --lit-paper: #fffef9;
+  --lit-paper-dim: #faf6ef;
+  --lit-border: #e2d8ca;
+  --lit-accent: #4a6676;
+  --lit-accent-deep: #3a5260;
+  --lit-wash: rgba(255, 252, 245, 0.92);
+  --lit-shadow: 0 10px 36px rgba(42, 35, 24, 0.07);
+  --lit-shadow-soft: 0 4px 18px rgba(42, 35, 24, 0.05);
+  /* 挂在 body 的弹窗 / Message 也能继承 */
+  --el-color-primary: #4a6676;
+  --el-color-primary-light-3: #6d8494;
+  --el-color-primary-light-5: #8fa0ad;
+  --el-color-primary-light-7: #b5c0c9;
+  --el-color-primary-light-8: #cdd5dc;
+  --el-color-primary-light-9: #e8edf1;
+  --el-color-primary-dark-2: #3a5260;
+  --el-bg-color: var(--lit-paper);
+  --el-bg-color-page: transparent;
+  --el-fill-color-blank: var(--lit-paper);
+  --el-border-color: var(--lit-border);
+  --el-border-color-light: #ebe4d9;
+  --el-text-color-primary: var(--lit-ink);
+  --el-text-color-regular: #4a4338;
+  --el-text-color-secondary: var(--lit-ink-muted);
+  --el-border-radius-base: 10px;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--lit-ink);
+  background-color: #e8dfd4;
+  background-image:
+    radial-gradient(ellipse 100% 70% at 50% -15%, rgba(255, 250, 240, 0.97), transparent 58%),
+    radial-gradient(ellipse 55% 45% at 95% 30%, rgba(220, 232, 242, 0.45), transparent 52%),
+    radial-gradient(ellipse 45% 40% at 5% 75%, rgba(245, 228, 210, 0.35), transparent 50%),
+    linear-gradient(168deg, #f3ebe0 0%, #e9dfd2 42%, #e0d4c6 100%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  min-height: 100vh;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  text-align: left;
+  border: none;
+  box-sizing: border-box;
+}
+
+.app-literary {
+  position: relative;
+  min-height: 100vh;
+  padding: clamp(12px, 2.2vw, 22px) clamp(12px, 2.5vw, 24px) clamp(16px, 3vw, 28px);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+.app-literary .wrap {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 1480px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+/* 顶栏 */
+.app-header {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 20px;
+  padding: 18px 22px 20px;
+  background: var(--lit-wash);
+  border: 1px solid var(--lit-border);
+  border-radius: 16px;
+  box-shadow: var(--lit-shadow-soft);
+  backdrop-filter: blur(8px);
+}
+
+.app-header-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.app-tagline {
+  margin: 0 0 6px;
+  font-family: "Noto Serif SC", "Songti SC", "SimSun", serif;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  color: var(--lit-ink-muted);
+}
+
+.app-title {
+  margin: 0;
+  font-family: "Noto Serif SC", "Songti SC", "SimSun", serif;
+  font-size: clamp(1.35rem, 2.2vw, 1.75rem);
+  font-weight: 600;
+  color: var(--lit-ink);
+  line-height: 1.25;
+  letter-spacing: 0.04em;
+}
+
+.app-header-accent {
+  width: 4px;
+  min-height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #c4a574 0%, var(--lit-accent) 48%, #3a5260 100%);
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+/* 三栏卡片：纸面 + 轻阴影（含 shadow="never"） */
+.app-literary .el-card {
+  background: linear-gradient(180deg, #fffef9 0%, #faf6ef 100%);
+  border: 1px solid var(--lit-border) !important;
+  border-radius: 14px !important;
+  box-shadow: var(--lit-shadow) !important;
+}
+
+.app-literary .el-card .el-card__body {
+  color: var(--lit-ink);
+}
+
+.app-literary .el-divider {
+  border-color: #ebe3d6;
+}
+
+/* 中间栏折叠标题：暖纸色条 */
+.app-literary .el-collapse-item__header {
+  border-color: #d8cbb8 !important;
+  background: linear-gradient(90deg, #faf4ea, #f2e9dc) !important;
+  color: var(--lit-ink) !important;
+}
+
+.app-literary .el-collapse-item__header.is-active {
+  border-color: #c9b9a4 !important;
+  background: linear-gradient(90deg, #f5ecdf, #ebe0d0) !important;
+}
+
+/* 运行区 / 规划流 等 pre */
+.app-literary .result-pre {
+  background: #fcf8f1 !important;
+  border-color: #e5dcd0 !important;
+  color: #2a2318;
+  font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.app-literary .output-path-tip code {
+  background: #f0e8dc;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+/* 分割条 */
+.app-literary .resize-handle {
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    transparent 32%,
+    rgba(196, 165, 116, 0.35) 45%,
+    rgba(74, 102, 118, 0.25) 55%,
+    rgba(196, 165, 116, 0.35) 68%,
+    transparent 100%
+  ) !important;
+}
+
+.app-literary .resize-handle:hover {
+  filter: brightness(0.92);
+}
+
+/* Tabs */
+.app-literary .el-tabs__item.is-active {
+  color: var(--lit-accent-deep);
+  font-weight: 600;
+}
+
+.app-literary .el-tabs__active-bar {
+  background-color: var(--lit-accent);
+}
+
+/* 输入框轻暖底 */
+.app-literary .el-textarea__inner,
+.app-literary .el-input__wrapper {
+  background-color: #fffdf8;
+}
+
+.app-literary .el-textarea__inner:focus,
+.app-literary .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px var(--lit-accent) inset;
+}
+
+/* 弹窗：纸色底 + 与页面一致 */
+.el-dialog {
+  background: linear-gradient(180deg, #fffef9 0%, #faf6ef 100%);
+  border: 1px solid var(--lit-border);
+  border-radius: 14px;
+  box-shadow: var(--lit-shadow);
+}
+
+.el-dialog__header {
+  border-bottom: 1px solid #ebe3d6;
+  margin-right: 0;
+  padding-bottom: 14px;
+}
+
+.el-dialog__title {
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-weight: 600;
+  color: var(--lit-ink);
+}

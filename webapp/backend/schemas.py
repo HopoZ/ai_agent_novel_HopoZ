@@ -54,10 +54,12 @@ class RunModeRequest(BaseModel):
         default=None, description="新建事件的 summary"
     )
     new_event_prev_id: Optional[str] = Field(
-        default=None, description="新建事件的上一事件（ev:timeline:X）"
+        default=None,
+        description="新建事件的上一事件（ev:timeline:X）；留空则不写前置 timeline_next，不推断",
     )
     new_event_next_id: Optional[str] = Field(
-        default=None, description="新建事件的下一事件（ev:timeline:X）"
+        default=None,
+        description="新建事件的下一事件（ev:timeline:X）；留空则不写后置 timeline_next，不推断",
     )
     time_slot_override: Optional[str] = None
     # 新字段：主视角可多选（表示与本章最相关核心人物）
@@ -66,6 +68,10 @@ class RunModeRequest(BaseModel):
     pov_character_id_override: Optional[str] = None
     # 配角设定（前端“快速多选角色”）
     supporting_character_ids: Optional[List[str]] = None
+    current_map: Optional[str] = Field(
+        default=None,
+        description="当前地图/场景空间说明（可选，会拼入发给模型的 user_task 约束）",
+    )
     lore_tags: Optional[List[str]] = None
     # 单次请求 LLM 采样参数（留空则使用服务端默认，见 agents/novel/llm_client.init_deepseek_chat）
     llm_temperature: Optional[float] = Field(
