@@ -11,10 +11,11 @@ from typing import List, Optional, Tuple
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, convert_to_openai_messages
+from openai import OpenAI
 
 from agents.lore.loader import LoreLoader
-from agents.text_utils import parse_ai_chunk_text
+from agents.text_utils import openai_chat_delta_reasoning_and_answer, parse_ai_chunk_text
 
 try:
     import winsound
@@ -36,19 +37,34 @@ def _load_cli_lorebook_raw(loader: LoreLoader, lore_tags: Optional[list[str]]) -
     return text
 
 
+DEFAULT_REASONER_MODEL = "deepseek-reasoner"
+DEFAULT_CHAT_MODEL = "deepseek-chat"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+_REASONER_MAX_TOKENS = 32768
+_CHAT_MAX_TOKENS = 20000
+
+
 class WritingAgent:
-    def __init__(self):
+    def __init__(self, model_name: str = DEFAULT_REASONER_MODEL):
         load_dotenv()
         self.lore_loader = LoreLoader()
-        self.model = init_chat_model(
-            "deepseek-chat",
-            model_provider="openai",
-            api_key=os.getenv("DEEPSEEK_API_KEY"),
-            base_url="https://api.deepseek.com/v1",
-            temperature=0.8,
-            output_version="v1",
-            max_tokens=20000,
-        )
+        self.model_name = model_name
+        self._reasoner_mode = "reasoner" in model_name.lower()
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        if self._reasoner_mode:
+            self.model = None
+            self._oai = OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+        else:
+            self._oai = None
+            self.model = init_chat_model(
+                model_name,
+                model_provider="openai",
+                api_key=api_key,
+                base_url=DEEPSEEK_BASE_URL,
+                temperature=0.8,
+                output_version="v1",
+                max_tokens=_CHAT_MAX_TOKENS,
+            )
 
     def open_session(self, lore_tags: Optional[list[str]] = None) -> List[BaseMessage]:
         lore_context = _load_cli_lorebook_raw(self.lore_loader, lore_tags)
@@ -76,43 +92,95 @@ class WritingAgent:
         self, messages: List[BaseMessage], user_text: str
     ) -> Tuple[str, dict, bool]:
         """
-        追加用户消息，流式调用模型，终端实时打印增量；最后把完整助手回复写入 messages。
-        返回 (助手文本, usage_metadata, 是否应写入会话文件；若 Ctrl+C 且无任何输出则为 False)。
+        追加用户消息，流式调用模型，终端实时打印增量；最后把助手【正文】写入 messages
+        （深度思考模型不把 reasoning_content 写入历史，避免多轮 400）。
+        返回 (会话记录用展示文本, usage 摘要, 是否应写入会话文件；若 Ctrl+C 且无任何输出则为 False)。
         """
         messages.append(HumanMessage(content=user_text))
-        parts: list[str] = []
         last_usage: dict = {}
         interrupted = False
+        reasoning_parts: list[str] = []
+        content_parts: list[str] = []
+        reasoning_header = False
+        content_header = False
 
         try:
-            for chunk in self.model.stream(messages):
-                delta = parse_ai_chunk_text(chunk)
-                if delta:
-                    sys.stdout.write(delta)
-                    sys.stdout.flush()
-                    parts.append(delta)
-                um = getattr(chunk, "usage_metadata", None) or {}
-                if um:
-                    last_usage = um
+            if self._reasoner_mode:
+                api_messages = convert_to_openai_messages(messages)
+                stream = self._oai.chat.completions.create(
+                    model=self.model_name,
+                    messages=api_messages,
+                    max_tokens=_REASONER_MAX_TOKENS,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                )
+                for event in stream:
+                    if getattr(event, "usage", None) is not None:
+                        u = event.usage
+                        last_usage = {
+                            "total_tokens": getattr(u, "total_tokens", None),
+                            "prompt_tokens": getattr(u, "prompt_tokens", None),
+                            "completion_tokens": getattr(
+                                u, "completion_tokens", None
+                            ),
+                        }
+                    choices = getattr(event, "choices", None) or []
+                    if not choices:
+                        continue
+                    delta = choices[0].delta
+                    r_delta, c_delta = openai_chat_delta_reasoning_and_answer(delta)
+                    if r_delta:
+                        if not reasoning_header:
+                            sys.stdout.write("\n── 深度思考 ──\n")
+                            reasoning_header = True
+                            sys.stdout.flush()
+                        sys.stdout.write(r_delta)
+                        sys.stdout.flush()
+                        reasoning_parts.append(r_delta)
+                    if c_delta:
+                        if reasoning_header and not content_header:
+                            sys.stdout.write("\n── 正文 ──\n")
+                            content_header = True
+                            sys.stdout.flush()
+                        sys.stdout.write(c_delta)
+                        sys.stdout.flush()
+                        content_parts.append(c_delta)
+            else:
+                assert self.model is not None
+                for chunk in self.model.stream(messages):
+                    delta = parse_ai_chunk_text(chunk)
+                    if delta:
+                        sys.stdout.write(delta)
+                        sys.stdout.flush()
+                        content_parts.append(delta)
+                    um = getattr(chunk, "usage_metadata", None) or {}
+                    if um:
+                        last_usage = um
         except KeyboardInterrupt:
             interrupted = True
             sys.stdout.write("\n")
             sys.stdout.flush()
 
-        text = "".join(parts)
-        if interrupted and not text.strip():
+        reasoning_text = "".join(reasoning_parts)
+        content_text = "".join(content_parts)
+        if reasoning_text.strip():
+            display = f"【深度思考】\n{reasoning_text}\n\n【正文】\n{content_text}"
+        else:
+            display = content_text
+
+        if interrupted and not display.strip():
             messages.pop()  # 无任何输出时撤销本轮 HumanMessage
             should_log = False
         else:
-            messages.append(AIMessage(content=text))
+            messages.append(AIMessage(content=content_text))
             should_log = True
         if not interrupted:
             sys.stdout.write("\n")
             sys.stdout.flush()
-        elif text.strip():
+        elif display.strip():
             sys.stdout.write("\n[本轮已中止，已保存已输出部分]\n")
             sys.stdout.flush()
-        return text, last_usage, should_log
+        return display, last_usage, should_log
 
 
 def _parse_tags(s: Optional[str]) -> Optional[list[str]]:
@@ -130,6 +198,8 @@ def _append_turn_file(path: str, turn: int, user_text: str, assistant_text: str)
 def _print_help() -> None:
     print(
         "命令：/help  /quit 或 /exit 退出并保存  /clear 清空对话（保留系统与 lore）\n"
+        "默认深度思考模型：流式先显示「深度思考」再「正文」；历史里只保存正文。\n"
+        "重新启动可加 --fast 使用对话模型（更快，无单独思考段）。\n"
         "生成中可按 Ctrl+C 中止本轮；会话记录仍会保存已输出部分。"
     )
 
@@ -161,6 +231,11 @@ if __name__ == "__main__":
         action="store_true",
         help="列出 lores 下全部 tag 后退出",
     )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help=f"使用 {DEFAULT_CHAT_MODEL}（非深度思考），流式为单路正文",
+    )
     args = parser.parse_args()
 
     loader = LoreLoader()
@@ -170,7 +245,8 @@ if __name__ == "__main__":
         sys.exit(0)
 
     tags = _parse_tags(args.tags)
-    agent = WritingAgent()
+    model_name = DEFAULT_CHAT_MODEL if args.fast else DEFAULT_REASONER_MODEL
+    agent = WritingAgent(model_name=model_name)
     messages = agent.open_session(lore_tags=tags)
 
     os.makedirs("outputs", exist_ok=True)
@@ -178,12 +254,19 @@ if __name__ == "__main__":
     transcript_path = os.path.join("outputs", f"cli_session_{stamp}.txt")
     tags_line = ", ".join(tags) if tags else "(全部 md)"
     with open(transcript_path, "w", encoding="utf-8") as f:
+        mode_note = (
+            "深度思考（正文单独落盘于对话历史）"
+            if agent._reasoner_mode
+            else "对话模型"
+        )
         f.write(
             f"# CLI 会话记录 {stamp}\n# lore: {tags_line}\n"
+            f"# model: {agent.model_name} ({mode_note})\n"
             f"# 结束方式：/quit、Ctrl+C 或 Ctrl+D\n\n"
         )
 
     print(f"会话记录将写入：{transcript_path}")
+    print(f"模型：{agent.model_name}（{'深度思考' if agent._reasoner_mode else '对话'}）")
     print("从 lores 已加载 md 原文。输入 /help 查看命令。\n")
 
     turn_counter = [0]

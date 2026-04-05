@@ -61,6 +61,8 @@ python -m uvicorn webapp.backend.server:app --reload --port 8000
 python -m cli
 ```
 
+默认使用 DeepSeek **深度思考**模型（`deepseek-reasoner`），终端流式区分「深度思考」与「正文」，会话文件与多轮历史仅保留正文以便 API 兼容。加 `--fast` 可改用 `deepseek-chat`。
+
 ---
 
 ## 功能要点
@@ -68,7 +70,7 @@ python -m cli
 - **先预览再运行**：主流程先请求 `preview_input`，确认后再 `run_stream`，减少误触耗 token。
 - **流式与可中止**：规划 / 正文 / 优化建议等 SSE 阶段可观察；可中止以节省 token。
 - **下章续写**：写章、修订、扩写或优化完成后可弹出「下章提示」，确认后沿用「生成正文」同款预览链，并尽量自动绑定本章时间线事件。
-- **图谱**：人物 / 事件 / 混合视图，全屏编辑节点与边（数据落在 `storage/novels/<id>/` 四表）。
+- **图谱**：人物 / 事件 / 混合视图，全屏编辑节点与边（数据落在 `storage/novels/<id>/novel.db` 中四表与 `novel_state`）。
 - **前端适配**：窄屏（约 ≤1180px）三栏纵向堆叠；宽屏下随窗口压缩左/中栏宽度，减少横向滚动；中间表单区折叠为手风琴（一次只展开一块）。
 
 ---
@@ -105,9 +107,9 @@ mobile/              # Flet 客户端示例
 
 持久化要点：
 
-- **章节与结构化字段**：`storage/novels/<id>/chapters/*.json`
-- **运行态摘要**：`storage/novels/<id>/state.json`（关系类事实以四表为准）
-- **图谱四表**：`character_*`、`event_*` 等 JSON，与 API `GET/PATCH/POST/DELETE /api/novels/{id}/graph*` 对应
+- **单本小说数据**：`storage/novels/<id>/novel.db`（SQLite：`novel_state`、章节行、图谱四表）
+- **运行态叙事状态**：`novel_state` 表中的 `NovelState` JSON（人物关系边以四表为准）
+- **图谱**：人物/事件实体与关系存于上述 DB，与 API `GET/PATCH/POST/DELETE /api/novels/{id}/graph*` 对应
 
 常用 HTTP 示例：
 

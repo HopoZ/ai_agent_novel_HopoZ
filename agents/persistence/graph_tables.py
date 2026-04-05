@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import json
-import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from agents.persistence import novel_sqlite
 from agents.persistence.storage import (
     get_chapters_dir,
-    get_state_path,
     list_chapters,
     list_chapters_latest_per_index,
     load_state,
@@ -21,26 +20,6 @@ from agents.state.state_models import ChapterRecord, NovelState
 
 def _novel_dir(novel_id: str) -> Path:
     return Path("storage") / "novels" / novel_id
-
-
-def _graph_dir(novel_id: str) -> Path:
-    return _novel_dir(novel_id) / "graph"
-
-
-def _character_entities_path(novel_id: str) -> Path:
-    return _novel_dir(novel_id) / "character_entities.json"
-
-
-def _character_relations_path(novel_id: str) -> Path:
-    return _novel_dir(novel_id) / "character_relations.json"
-
-
-def _event_entities_path(novel_id: str) -> Path:
-    return _novel_dir(novel_id) / "event_entities.json"
-
-
-def _event_relations_path(novel_id: str) -> Path:
-    return _novel_dir(novel_id) / "event_relations.json"
 
 
 def new_timeline_event_id() -> str:
@@ -125,18 +104,12 @@ def ensure_timeline_stable_ids(novel_id: str, state: NovelState) -> None:
                 return idx_to_id[j]
         return s
 
-    er_path = _event_relations_path(novel_id)
-    ee_path = _event_entities_path(novel_id)
+    if not novel_sqlite.db_exists(novel_id):
+        return
+
+    rel_rows = novel_sqlite.load_event_relations_rows(novel_id)
     need_remap = changed_state
-    rel_rows: Optional[List[Dict[str, Any]]] = None
-    er_data: Optional[Dict[str, Any]] = None
-    if er_path.exists():
-        try:
-            er_data = json.loads(er_path.read_text(encoding="utf-8"))
-            rel_rows = list(er_data.get("relations") or [])
-        except Exception:
-            rel_rows = None
-    if rel_rows is not None and not need_remap:
+    if not need_remap:
         for r in rel_rows:
             for k in ("source", "target"):
                 v = str(r.get(k, "") or "").strip()
@@ -149,36 +122,27 @@ def ensure_timeline_stable_ids(novel_id: str, state: NovelState) -> None:
                 break
 
     wrote = False
-    if need_remap and rel_rows is not None and er_data is not None:
+    if need_remap:
         new_rel = []
         for r in rel_rows:
             ns = map_node(str(r.get("source", "") or ""))
             nt = map_node(str(r.get("target", "") or ""))
             new_rel.append({**r, "source": ns, "target": nt})
-        er_data["relations"] = new_rel
-        er_data["updated_at"] = datetime.utcnow().isoformat()
-        er_path.parent.mkdir(parents=True, exist_ok=True)
-        er_path.write_text(json.dumps(er_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        novel_sqlite.replace_event_relations(novel_id, new_rel)
         wrote = True
 
-    if need_remap and ee_path.exists():
-        try:
-            ee_raw = json.loads(ee_path.read_text(encoding="utf-8"))
-            events = list(ee_raw.get("events") or [])
-            touched = False
-            for row in events:
-                old = str(row.get("event_id", "") or "").strip()
-                neu = map_node(old)
-                if neu != old:
-                    row["event_id"] = neu
-                    touched = True
-            if touched:
-                ee_raw["events"] = events
-                ee_raw["updated_at"] = datetime.utcnow().isoformat()
-                ee_path.write_text(json.dumps(ee_raw, ensure_ascii=False, indent=2), encoding="utf-8")
-                wrote = True
-        except Exception:
-            pass
+        ee_rows = novel_sqlite.load_event_entities_rows(novel_id)
+        new_ee: List[Dict[str, Any]] = []
+        touched = False
+        for row in ee_rows:
+            old = str(row.get("event_id", "") or "").strip()
+            neu = map_node(old)
+            if neu != old:
+                touched = True
+            new_ee.append({**row, "event_id": neu})
+        if touched:
+            novel_sqlite.replace_event_entities(novel_id, new_ee)
+            wrote = True
 
     if changed_state or wrote:
         save_state(novel_id, state)
@@ -207,80 +171,29 @@ def ensure_graph_tables(novel_id: str) -> None:
             except Exception:
                 pass
 
-    ce_path = _character_entities_path(novel_id)
-    cpath = _character_relations_path(novel_id)
-    ee_path = _event_entities_path(novel_id)
-    epath = _event_relations_path(novel_id)
-
-    # 兼容迁移：从旧 graph/* 或旧 *table.json 自动迁移到新四表路径
-    old_cpath = _graph_dir(novel_id) / "character_relations.json"
-    old_epath = _graph_dir(novel_id) / "event_relations.json"
-    old_character_table = _novel_dir(novel_id) / "character_table.json"
-    old_event_table = _novel_dir(novel_id) / "event_table.json"
-
-    if (not cpath.exists()) and old_cpath.exists():
-        cpath.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(old_cpath, cpath)
-    if (not epath.exists()) and old_epath.exists():
-        epath.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(old_epath, epath)
-    if old_character_table.exists():
-        try:
-            data = json.loads(old_character_table.read_text(encoding="utf-8"))
-            if (not ce_path.exists()) and isinstance(data.get("characters"), list):
-                ce_path.write_text(
-                    json.dumps({"characters": data.get("characters") or [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-            if (not cpath.exists()) and isinstance(data.get("relations"), list):
-                cpath.write_text(
-                    json.dumps({"relations": data.get("relations") or [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-        except Exception:
-            pass
-    if old_event_table.exists():
-        try:
-            data = json.loads(old_event_table.read_text(encoding="utf-8"))
-            if (not ee_path.exists()) and isinstance(data.get("events"), list):
-                ee_path.write_text(
-                    json.dumps({"events": data.get("events") or [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-            if (not epath.exists()) and isinstance(data.get("relations"), list):
-                epath.write_text(
-                    json.dumps({"relations": data.get("relations") or [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-        except Exception:
-            pass
-
-    if ce_path.exists() and cpath.exists() and ee_path.exists() and epath.exists():
+    if not novel_sqlite.db_exists(novel_id):
         return
 
-    sp = get_state_path(novel_id)
-    if not sp.exists():
-        if not ce_path.exists():
-            ce_path.write_text(json.dumps({"characters": [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
-        if not cpath.exists():
-            cpath.write_text(json.dumps({"relations": [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
-        if not ee_path.exists():
-            ee_path.write_text(json.dumps({"events": [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
-        if not epath.exists():
-            epath.write_text(json.dumps({"relations": [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
+    if novel_sqlite.is_graph_initialized(novel_id):
+        return
+
+    raw = novel_sqlite.read_state_json(novel_id)
+    if not raw:
+        novel_sqlite.replace_character_entities(novel_id, [])
+        novel_sqlite.replace_character_relations(novel_id, [])
+        novel_sqlite.replace_event_entities(novel_id, [])
+        novel_sqlite.replace_event_relations(novel_id, [])
+        novel_sqlite.set_graph_initialized(novel_id)
         return
 
     try:
-        state = NovelState.model_validate(json.loads(sp.read_text(encoding="utf-8")))
+        state = NovelState.model_validate(json.loads(raw))
     except Exception:
-        if not ce_path.exists():
-            ce_path.write_text(json.dumps({"characters": [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
-        if not cpath.exists():
-            cpath.write_text(json.dumps({"relations": [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
-        if not ee_path.exists():
-            ee_path.write_text(json.dumps({"events": [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
-        if not epath.exists():
-            epath.write_text(json.dumps({"relations": [], "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
+        novel_sqlite.replace_character_entities(novel_id, [])
+        novel_sqlite.replace_character_relations(novel_id, [])
+        novel_sqlite.replace_event_entities(novel_id, [])
+        novel_sqlite.replace_event_relations(novel_id, [])
+        novel_sqlite.set_graph_initialized(novel_id)
         return
 
     ensure_timeline_stable_ids(novel_id, state)
@@ -360,95 +273,68 @@ def ensure_graph_tables(novel_id: str) -> None:
                 }
             )
 
-    ce_path.write_text(
-        json.dumps({"characters": char_entities, "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    cpath.write_text(
-        json.dumps({"relations": char_relations, "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    ee_path.write_text(
-        json.dumps({"events": event_rows, "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    epath.write_text(
-        json.dumps({"relations": event_relations, "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    novel_sqlite.replace_character_entities(novel_id, char_entities)
+    novel_sqlite.replace_character_relations(novel_id, char_relations)
+    novel_sqlite.replace_event_entities(novel_id, event_rows)
+    novel_sqlite.replace_event_relations(novel_id, event_relations)
+    novel_sqlite.set_graph_initialized(novel_id)
     save_state(novel_id, state)
 
 
 def load_character_relations(novel_id: str) -> List[Dict[str, Any]]:
     ensure_graph_tables(novel_id)
-    p = _character_relations_path(novel_id)
-    if not p.exists():
+    if not novel_sqlite.db_exists(novel_id):
         return []
-    data = json.loads(p.read_text(encoding="utf-8"))
-    return data.get("relations") or []
+    return novel_sqlite.load_character_relations_rows(novel_id)
 
 
 def load_character_entities(novel_id: str) -> List[Dict[str, Any]]:
     ensure_graph_tables(novel_id)
-    p = _character_entities_path(novel_id)
-    if not p.exists():
+    if not novel_sqlite.db_exists(novel_id):
         return []
-    data = json.loads(p.read_text(encoding="utf-8"))
-    return data.get("characters") or []
+    return novel_sqlite.load_character_entities_rows(novel_id)
 
 
 def save_character_entities(novel_id: str, rows: List[Dict[str, Any]]) -> None:
     ensure_graph_tables(novel_id)
-    p = _character_entities_path(novel_id)
-    p.write_text(
-        json.dumps({"characters": rows, "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    if not novel_sqlite.db_exists(novel_id):
+        return
+    novel_sqlite.replace_character_entities(novel_id, rows)
 
 
 def save_character_relations(novel_id: str, rows: List[Dict[str, Any]]) -> None:
     ensure_graph_tables(novel_id)
-    p = _character_relations_path(novel_id)
-    p.write_text(
-        json.dumps({"relations": rows, "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    if not novel_sqlite.db_exists(novel_id):
+        return
+    novel_sqlite.replace_character_relations(novel_id, rows)
 
 
 def load_event_relations(novel_id: str) -> List[Dict[str, Any]]:
     ensure_graph_tables(novel_id)
-    p = _event_relations_path(novel_id)
-    if not p.exists():
+    if not novel_sqlite.db_exists(novel_id):
         return []
-    data = json.loads(p.read_text(encoding="utf-8"))
-    return data.get("relations") or []
+    return novel_sqlite.load_event_relations_rows(novel_id)
 
 
 def load_event_rows(novel_id: str) -> List[Dict[str, Any]]:
     ensure_graph_tables(novel_id)
-    p = _event_entities_path(novel_id)
-    if not p.exists():
+    if not novel_sqlite.db_exists(novel_id):
         return []
-    data = json.loads(p.read_text(encoding="utf-8"))
-    return data.get("events") or []
+    return novel_sqlite.load_event_entities_rows(novel_id)
 
 
 def save_event_rows(novel_id: str, rows: List[Dict[str, Any]]) -> None:
     ensure_graph_tables(novel_id)
-    p = _event_entities_path(novel_id)
-    p.write_text(
-        json.dumps({"events": rows, "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    if not novel_sqlite.db_exists(novel_id):
+        return
+    novel_sqlite.replace_event_entities(novel_id, rows)
 
 
 def save_event_relations(novel_id: str, rows: List[Dict[str, Any]]) -> None:
     ensure_graph_tables(novel_id)
-    p = _event_relations_path(novel_id)
-    p.write_text(
-        json.dumps({"relations": rows, "updated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    if not novel_sqlite.db_exists(novel_id):
+        return
+    novel_sqlite.replace_event_relations(novel_id, rows)
 
 
 def sync_timeline_event_entity_rows(novel_id: str, state: NovelState) -> None:
@@ -687,7 +573,7 @@ def persist_chapter_artifacts(
     """
     正文 API 的统一落盘入口：
     1) 保存章节
-    2) 保存 next_state（state.json 不含 relationships 真源）
+    2) 保存 next_state（`novel_state` 不含 relationships 真源）
     3) 同步四表侧：人物/事件实体行、appear 边、timeline_next 边
 
     若本 run 在 state 中插入了新建时间线事件，传入 new_timeline_event_id 及可选 prev/next，
