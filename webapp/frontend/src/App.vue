@@ -32,9 +32,9 @@
         <ol class="first-run-list">
           <li>点击右上角「API 密钥」，填写 DeepSeek API（或在本机设置环境变量 <code>DEEPSEEK_API_KEY</code>）。</li>
           <li>点击左侧「打开输入」，在 <strong>lores</strong> 文件夹内按子目录放入 <strong>.md</strong> 设定（路径即标签）；保存后左侧勾选标签。</li>
-          <li>写作生成的正文在「打开输出」对应目录（与开发时仓库根下 <code>outputs/</code> 相同含义）。</li>
+          <li>写作生成的正文在「打开输出」对应目录。</li>
         </ol>
-        <p class="first-run-muted">桌面安装版可一键打开文件夹；仅用浏览器开发时，请直接使用仓库里的 <code>lores/</code>、<code>outputs/</code>。</p>
+        <p class="first-run-muted">桌面安装版可一键打开输入与输出文件夹。</p>
       </el-alert>
 
       <div class="main-layout" :class="{ 'main-layout--stack': layoutStacked }">
@@ -70,7 +70,7 @@
           :anchors-loading="anchorsLoading"
           :anchors="anchors"
           :inferred-time-slot-hint="inferredTimeSlotHint"
-          :all-character-options="allCharacterOptions"
+          :all-character-options="allCharacterSelectOptions"
           :previewing-input="previewingInput"
           :open-create-dialog="openCreateDialog"
           :on-pov-change="onPovChange"
@@ -78,8 +78,8 @@
           :open-role-manager="openRoleManager"
           :run-generate="runGenerate"
           :run-expand="runExpand"
-          :run-optimize="runOptimize"
           :run-init-world="runInitWorld"
+          :run-optimize="runOptimize"
           :abort-run="abortRun"
         />
       </div>
@@ -136,7 +136,7 @@
   <RoleManagerDialog
     v-model="roleManagerVisible"
     v-model:character-tag-draft="characterTagDraft"
-    :all-character-options="allCharacterOptions"
+    :all-character-options="allCharacterSelectOptions"
     @add="addCharacterTag"
     @remove="removeCharacterTag"
   />
@@ -156,6 +156,17 @@
   />
 
   <ApiSettingsDialog v-model="apiSettingsVisible" />
+
+  <WorldInitDialog
+    v-model="worldInitDialogVisible"
+    :running="running && currentStreamMode === 'init_state'"
+    :phase-label="runPhaseLabel"
+    :hint="runHint"
+    :stream-text="worldInitStreamText"
+    :token-usage="tokenUsageText"
+    :error-message="worldInitError"
+    @abort="abortRun"
+  />
 </template>
 
 <script lang="ts" setup>
@@ -176,6 +187,7 @@ import RoleManagerDialog from "./components/dialogs/RoleManagerDialog.vue";
 import NextChapterHintDialog from "./components/dialogs/NextChapterHintDialog.vue";
 import OptimizeIntentDialog from "./components/dialogs/OptimizeIntentDialog.vue";
 import ApiSettingsDialog from "./components/dialogs/ApiSettingsDialog.vue";
+import WorldInitDialog from "./components/dialogs/WorldInitDialog.vue";
 
 type AppRunMode =
   | "init_state"
@@ -184,6 +196,10 @@ type AppRunMode =
   | "revise_chapter"
   | "expand_chapter"
   | "optimize_suggestions";
+
+/** 新建小说引导弹窗里「用模型初始化」的默认任务句（可覆盖） */
+const DEFAULT_INIT_STATE_USER_TASK =
+  "根据左侧已勾选的设定，生成完整 NovelState（世界观、人物、连续性）；尊重本小说创建时填写的起始时间段与视角。";
 
 const { leftPanelWidth, midPanelWidth, layoutStacked, startResizeLeft, startResizeMid } =
   usePanelResize();
@@ -203,7 +219,8 @@ const previewFullCache = reactive<Record<string, string>>({});
 
 const anchorsLoading = ref(false);
 const anchors = ref<Array<{ id: string; label: string; type: string; time_slot: string }>>([]);
-const characterOptions = ref<string[]>([]);
+/** 来自后端的角色候选项：value 为稳定 id，label 为展示名（中文名等） */
+const characterOptionRows = ref<Array<{ id: string; label: string }>>([]);
 const customCharacterOptions = ref<string[]>([]);
 const hiddenCharacterOptions = ref<string[]>([]);
 const characterTagDraft = ref("");
@@ -215,11 +232,25 @@ const resultText = ref("等待你的操作...");
 const nextStatusText = ref("");
 const planStreamText = ref("");
 const runPhase = ref<
-  "idle" | "planning" | "writing" | "optimizing" | "saving" | "outputs_written" | "done" | "error"
+  | "idle"
+  | "world_init"
+  | "planning"
+  | "writing"
+  | "optimizing"
+  | "saving"
+  | "outputs_written"
+  | "done"
+  | "error"
 >("idle");
 const runHint = ref("");
 const lastOutputPath = ref("");
 const tokenUsageText = ref("");
+
+/** 当前 run_stream 的 mode（用于独立初始化窗口的 running 态等） */
+const currentStreamMode = ref("");
+const worldInitDialogVisible = ref(false);
+const worldInitStreamText = ref("");
+const worldInitError = ref("");
 
 const rightTab = ref<"result" | "next" | "plan" | "graph">("result");
 function onRightTabChange(v: "result" | "next" | "plan" | "graph") {
@@ -417,17 +448,24 @@ const currentNovelTitle = computed(() => {
   return hit?.novel_title || "";
 });
 
-const allCharacterOptions = computed(() => {
+const allCharacterSelectOptions = computed(() => {
   const hidden = new Set(hiddenCharacterOptions.value || []);
-  const merged = [...(characterOptions.value || []), ...(customCharacterOptions.value || [])]
-    .map((x) => String(x || "").trim())
-    .filter((x) => !!x && !hidden.has(x));
-  return Array.from(new Set(merged));
+  const api = (characterOptionRows.value || []).filter((x) => x.id && !hidden.has(x.id));
+  const custom = (customCharacterOptions.value || [])
+    .filter((id) => id && !hidden.has(id))
+    .map((id) => ({ id, label: id }));
+  const byId = new Map<string, { id: string; label: string }>();
+  for (const x of api) byId.set(x.id, x);
+  for (const x of custom) {
+    if (!byId.has(x.id)) byId.set(x.id, x);
+  }
+  return Array.from(byId.values());
 });
 
 const runPhaseLabel = computed(() => {
   const p = runPhase.value;
   if (p === "idle") return "待命";
+  if (p === "world_init") return "正在生成本书世界观";
   if (p === "planning") return "正在规划章节";
   if (p === "writing") return "正在生成正文";
   if (p === "optimizing") return "正在生成优化建议";
@@ -587,7 +625,7 @@ async function loadAnchors() {
 
 async function loadCharacterOptions() {
   const novelId = (form.novelId || "").trim();
-  characterOptions.value = [];
+  characterOptionRows.value = [];
   hiddenCharacterOptions.value = [];
   customCharacterOptions.value = [];
   characterTagDraft.value = "";
@@ -599,9 +637,31 @@ async function loadCharacterOptions() {
       `/api/novels/${encodeURIComponent(novelId)}/character_entities`,
       "GET",
       null
-    )) as { character_ids?: string[] };
-    const ids = Array.isArray(res?.character_ids) ? res.character_ids : [];
-    characterOptions.value = Array.from(new Set(ids.map((x) => String(x || "").trim()).filter(Boolean)));
+    )) as {
+      character_ids?: string[];
+      character_labels?: string[];
+      characters?: Array<{ character_id?: string; display_name?: string }>;
+    };
+    let rows: Array<{ id: string; label: string }> = [];
+    if (Array.isArray(res?.characters) && res.characters.length) {
+      rows = res.characters
+        .map((r) => {
+          const id = String(r.character_id || "").trim();
+          const label = String(r.display_name || r.character_id || "").trim() || id;
+          return { id, label };
+        })
+        .filter((x) => x.id);
+    } else if (Array.isArray(res?.character_ids)) {
+      const ids = res.character_ids;
+      const labels = res.character_labels || [];
+      rows = ids
+        .map((id, i) => ({
+          id: String(id || "").trim(),
+          label: String(labels[i] ?? id ?? "").trim() || String(id || "").trim(),
+        }))
+        .filter((x) => x.id);
+    }
+    characterOptionRows.value = rows;
   } catch (e: unknown) {
     const err = e as { message?: string };
     logDebug("loadCharacterOptions failed: " + (err?.message || String(e)));
@@ -611,7 +671,11 @@ async function loadCharacterOptions() {
 function addCharacterTag() {
   const v = String(characterTagDraft.value || "").trim();
   if (!v) return;
-  if (!customCharacterOptions.value.includes(v) && !characterOptions.value.includes(v)) {
+  const known = new Set([
+    ...characterOptionRows.value.map((x) => x.id),
+    ...customCharacterOptions.value,
+  ]);
+  if (!known.has(v)) {
     customCharacterOptions.value.push(v);
   }
   hiddenCharacterOptions.value = hiddenCharacterOptions.value.filter((x) => x !== v);
@@ -629,20 +693,22 @@ function removeCharacterTag(cid: string) {
 
 function onPovChange(v: unknown) {
   const arr = Array.isArray(v) ? v : [];
+  const idSet = new Set(allCharacterSelectOptions.value.map((x) => x.id));
   for (const item of arr) {
     const key = String(item || "").trim();
     if (!key) continue;
-    if (!allCharacterOptions.value.includes(key)) customCharacterOptions.value.push(key);
+    if (!idSet.has(key)) customCharacterOptions.value.push(key);
     hiddenCharacterOptions.value = hiddenCharacterOptions.value.filter((x) => x !== key);
   }
 }
 
 function onFocusChange(v: unknown) {
   const arr = Array.isArray(v) ? v : [];
+  const idSet = new Set(allCharacterSelectOptions.value.map((x) => x.id));
   for (const item of arr) {
     const key = String(item || "").trim();
     if (!key) continue;
-    if (!allCharacterOptions.value.includes(key)) customCharacterOptions.value.push(key);
+    if (!idSet.has(key)) customCharacterOptions.value.push(key);
     hiddenCharacterOptions.value = hiddenCharacterOptions.value.filter((x) => x !== key);
   }
 }
@@ -687,23 +753,82 @@ async function openTagDialog(tag: string) {
 }
 
 async function createNovel() {
-  resultText.value = "创建中...";
+  running.value = true;
+  resultText.value = "创建中…";
+  const startSlot = (createForm.startTimeSlot || "").trim();
+  const pov = (createForm.povCharacterId || "").trim();
   const payload = {
     novel_title: (createForm.novelTitle || "").trim() || "未命名小说",
-    start_time_slot: (createForm.startTimeSlot || "").trim() || null,
-    pov_character_id: (createForm.povCharacterId || "").trim() || null,
+    start_time_slot: startSlot || null,
+    pov_character_id: pov || null,
     initial_user_task: null,
     lore_tags: selectedTags.value,
   };
-  const res = (await apiJson("/api/novels", "POST", payload)) as { novel_id: string };
-  form.novelId = res.novel_id;
+  let res: { novel_id: string };
+  try {
+    res = (await apiJson("/api/novels", "POST", payload)) as { novel_id: string };
+  } catch (e: unknown) {
+    const err = e as { message?: string };
+    ElMessage.error(`创建失败：${err?.message || String(e)}`);
+    running.value = false;
+    return;
+  }
+  const createdId = res.novel_id;
+  const createdTitle = payload.novel_title;
+  form.novelId = createdId;
   createForm.novelTitle = "";
   createForm.startTimeSlot = "";
   createForm.povCharacterId = "";
+  createDialogVisible.value = false;
   await loadNovels();
   await loadAnchors();
-  resultText.value = `创建成功！\n\n若尚未初始化世界，请展开「高级」点击「初始化世界」；否则可直接使用下方三个写作按钮。`;
-  createDialogVisible.value = false;
+  resultText.value = `《${createdTitle}》正在生成本书世界观…`;
+  const initPayload = buildAutoInitStatePayload(createdTitle, startSlot, pov);
+  await executeRun(createdId, initPayload);
+}
+
+/** 新建小说后自动 init_state：不经预览，直接跑 run_stream */
+function buildAutoInitStatePayload(
+  novelTitle: string,
+  startTimeSlot: string,
+  povCharacterId: string
+): Record<string, unknown> {
+  let userTask = DEFAULT_INIT_STATE_USER_TASK;
+  const extras: string[] = [];
+  if (novelTitle) extras.push(`书名：${novelTitle}`);
+  if (startTimeSlot) extras.push(`起始时间段：${startTimeSlot}`);
+  if (povCharacterId) extras.push(`起始视角角色：${povCharacterId}`);
+  if (extras.length) userTask = `${userTask}\n\n${extras.join("\n")}`;
+
+  const loreTags = selectedTags.value || [];
+  const payload: Record<string, unknown> = {
+    mode: "init_state",
+    user_task: userTask,
+    existing_event_id: null,
+    new_event_time_slot: null,
+    new_event_summary: null,
+    new_event_prev_id: null,
+    new_event_next_id: null,
+    time_slot_override: null,
+    pov_character_ids_override: povCharacterId ? [povCharacterId] : [],
+    supporting_character_ids: [],
+    chapter_preset_name: null,
+    current_map: null,
+    lore_tags: loreTags,
+  };
+  payload.llm_temperature =
+    form.llmTemperature != null && !Number.isNaN(form.llmTemperature)
+      ? form.llmTemperature
+      : DEFAULT_LLM_TEMPERATURE;
+  payload.llm_max_tokens = Math.round(
+    form.llmMaxTokens != null && !Number.isNaN(form.llmMaxTokens)
+      ? form.llmMaxTokens
+      : DEFAULT_LLM_MAX_TOKENS
+  );
+  if (form.llmTopP != null && !Number.isNaN(form.llmTopP)) {
+    payload.llm_top_p = form.llmTopP;
+  }
+  return payload;
 }
 
 function buildRunPayload(runMode: AppRunMode) {
@@ -779,8 +904,20 @@ function buildRunPayload(runMode: AppRunMode) {
 async function executeRun(novelId: string, payload: Record<string, unknown>) {
   running.value = true;
   runAbortController = new AbortController();
-  runPhase.value = "planning";
-  runHint.value = "已提交任务，正在排队/规划...";
+  const mode0 = String(payload.mode || "");
+  currentStreamMode.value = mode0;
+  const isInitRun = mode0 === "init_state";
+  if (mode0 === "init_state") {
+    runPhase.value = "world_init";
+    runHint.value = "正在生成本书世界观…";
+    worldInitError.value = "";
+    worldInitDialogVisible.value = true;
+    worldInitStreamText.value = "";
+    resultText.value = "本书世界观初始化输出在独立窗口中显示（见「本书世界观初始化」弹窗）。";
+  } else {
+    runPhase.value = "planning";
+    runHint.value = "已提交任务，正在排队/规划...";
+  }
   lastOutputPath.value = "";
   tokenUsageText.value = "";
   nextStatusText.value = "";
@@ -791,13 +928,23 @@ async function executeRun(novelId: string, payload: Record<string, unknown>) {
     let accContent = "";
     let donePayload: Record<string, unknown> | null = null;
     const refreshStreamText = () => {
-      resultText.value = `${logText}\n\n[content]\n${accContent}`;
+      const block = `${logText}\n\n[content]\n${accContent}`;
+      if (isInitRun) {
+        worldInitStreamText.value = block;
+      } else {
+        resultText.value = block;
+      }
     };
 
     await apiSse(`/api/novels/${novelId}/run_stream`, "POST", payload, (evt) => {
       const d = evt.data as Record<string, unknown> | null | undefined;
       if (evt.event === "phase") {
         const name = String(d?.name || "running");
+        if (name === "world_init" || name === "running") {
+          runPhase.value = "world_init";
+          runHint.value = "正在生成本书世界观…";
+          rightTab.value = "result";
+        }
         if (name === "planning" || name === "writing" || name === "saving" || name === "outputs_written") {
           runPhase.value = name;
         }
@@ -837,6 +984,9 @@ async function executeRun(novelId: string, payload: Record<string, unknown>) {
         const msg = d?.message || JSON.stringify(d);
         runPhase.value = "error";
         runHint.value = "执行失败，请查看下方错误日志";
+        if (isInitRun) {
+          worldInitError.value = String(msg);
+        }
         logText += `\n[error]\n${msg}\n`;
         refreshStreamText();
       } else if (evt.event === "done") {
@@ -847,6 +997,11 @@ async function executeRun(novelId: string, payload: Record<string, unknown>) {
     }, runAbortController.signal);
 
     if (donePayload) {
+      const modeStr = String(donePayload.mode || "");
+      if (modeStr === "init_state") {
+        worldInitError.value = "";
+        loadTags().catch(() => {});
+      }
       const ms = Date.now() - startAt;
       const ch = donePayload.chapter_index ? `chapter_index=${donePayload.chapter_index}` : "chapter_index=(auto)";
       const st = donePayload.state_updated ? "state_updated=true" : "state_updated=false";
@@ -867,7 +1022,6 @@ async function executeRun(novelId: string, payload: Record<string, unknown>) {
       }
       refreshStreamText();
 
-      const modeStr = String(donePayload.mode || "");
       const modesWithNextChapterHint = new Set([
         "write_chapter",
         "revise_chapter",
@@ -897,7 +1051,11 @@ async function executeRun(novelId: string, payload: Record<string, unknown>) {
     if (aborted) {
       runPhase.value = "idle";
       runHint.value = "已手动中止本次生成";
-      resultText.value += "\n\n[abort]\n用户已手动中止本次流式生成。\n";
+      if (mode0 === "init_state") {
+        worldInitStreamText.value += "\n\n[abort]\n用户已手动中止本次流式生成。\n";
+      } else {
+        resultText.value += "\n\n[abort]\n用户已手动中止本次流式生成。\n";
+      }
     } else {
       runPhase.value = "error";
       runHint.value = "执行失败，请查看错误信息";
@@ -906,7 +1064,12 @@ async function executeRun(novelId: string, payload: Record<string, unknown>) {
   } finally {
     running.value = false;
     runAbortController = null;
+    currentStreamMode.value = "";
   }
+}
+
+function runInitWorld() {
+  return startPreviewRun("init_state");
 }
 
 async function startPreviewRun(runMode: AppRunMode): Promise<boolean> {
@@ -914,7 +1077,7 @@ async function startPreviewRun(runMode: AppRunMode): Promise<boolean> {
   if (!built) return false;
   previewingInput.value = true;
   runPhase.value = "idle";
-  runHint.value = "正在生成本次 Input 预览...";
+  runHint.value = "正在生成预览…";
   try {
     const data = await apiJson(
       `/api/novels/${encodeURIComponent(built.novelId)}/preview_input`,
@@ -924,7 +1087,7 @@ async function startPreviewRun(runMode: AppRunMode): Promise<boolean> {
     setInputPreviewFromApi(data);
     pendingRunPayload.value = built.payload;
     pendingRunNovelId.value = built.novelId;
-    runHint.value = "Input 已生成，请在弹窗点击“确认并运行”";
+    runHint.value = "预览已生成，请在弹窗点击「确认并运行」";
     inputPreviewVisible.value = true;
     return true;
   } catch (e: unknown) {
@@ -964,13 +1127,9 @@ async function confirmOptimizeIntent() {
     pendingOptimizeDirection.value = "";
   }
 }
-function runInitWorld() {
-  return startPreviewRun("init_state");
-}
-
 async function confirmRunFromPreview() {
   if (!pendingRunPayload.value || !pendingRunNovelId.value) {
-    ElMessage.error("没有可运行的预览内容，请先点击主按钮生成 Input。");
+    ElMessage.error("没有可运行的预览，请先生成预览。");
     return;
   }
   pendingRunStarting.value = true;

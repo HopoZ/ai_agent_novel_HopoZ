@@ -7,10 +7,8 @@
     @open="onOpen"
   >
     <p class="api-help">
-      密钥仅保存在本机
-      <code>storage/user_settings.json</code>
-      （与小说数据同目录）；不会上传到项目仓库。调用模型时优先使用系统环境变量
-      <code>DEEPSEEK_API_KEY</code>，若已设置环境变量，界面保存的密钥不会生效。
+      密钥仅保存在本机 <code>storage/user_settings.json</code>。若本机已设置环境变量
+      <code>DEEPSEEK_API_KEY</code>，将优先使用环境变量，界面保存的密钥不生效。
     </p>
     <el-alert
       v-if="source === 'env'"

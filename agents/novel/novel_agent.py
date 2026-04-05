@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, Optional, Set, Tuple
@@ -38,8 +37,8 @@ from agents.persistence.storage import (
 from agents.text_utils import parse_ai_chunk_text, parse_ai_text, write_outputs_txt
 
 from .llm_client import bind_llm_options, init_deepseek_chat
-from .llm_json import extract_json_object, json_load_with_retry
-from .structured_invoke import invoke_pydantic_json
+from .llm_json import json_load_with_retry
+from .structured_invoke import invoke_pydantic_json, parse_streamed_output_to_pydantic
 from .timeline_focus import resolve_timeline_focus_event_id
 
 
@@ -291,8 +290,9 @@ class NovelAgent:
                 yield {"delta": text, "usage_metadata": usage}
 
         raw_text = "".join(chunks)
-        data = json.loads(extract_json_object(raw_text))
-        plan_json = NovelState.model_validate(data)
+        plan_json = parse_streamed_output_to_pydantic(
+            raw_text, model, system, NovelState, log=logger
+        )
         plan_json.meta.initialized = True
         plan_json.meta.current_chapter_index = max(
             state.meta.current_chapter_index,

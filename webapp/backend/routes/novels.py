@@ -29,7 +29,10 @@ from webapp.backend.run_helpers import (
     req_timeline_focus_id,
     uses_new_timeline_event_for_chapter,
 )
-from webapp.backend.schemas import CreateNovelRequest, RunModeRequest
+from webapp.backend.schemas import (
+    CreateNovelRequest,
+    RunModeRequest,
+)
 from webapp.backend.sse import sse_pack
 
 router = APIRouter(tags=["novels"])
@@ -124,17 +127,35 @@ def get_state(novel_id: str):
 
 @router.get("/{novel_id}/character_entities")
 def get_character_entities(novel_id: str):
-    """人物实体表 `character_entities.json`：供前端主视角/配角等多选候选项。"""
-    if not load_state(novel_id):
+    """人物实体表：供前端主视角/配角等多选候选项。`display_name` 来自 NovelState.characters[].name（或回退为 id）。"""
+    st = load_state(novel_id)
+    if not st:
         raise HTTPException(status_code=404, detail="novel not found")
     ensure_graph_tables(novel_id)
     rows = load_character_entities(novel_id)
-    ids = [
-        str(r.get("character_id") or "").strip()
-        for r in rows
-        if str(r.get("character_id") or "").strip()
-    ]
-    return {"novel_id": novel_id, "characters": rows, "character_ids": ids}
+    id_to_label: Dict[str, str] = {}
+    for c in st.characters or []:
+        cid = str(getattr(c, "character_id", "") or "").strip()
+        if not cid:
+            continue
+        nm = str(getattr(c, "name", None) or "").strip()
+        id_to_label[cid] = nm or cid
+    enriched: List[Dict[str, Any]] = []
+    for r in rows:
+        cid = str(r.get("character_id") or "").strip()
+        if not cid:
+            continue
+        row = dict(r)
+        row["display_name"] = id_to_label.get(cid, cid)
+        enriched.append(row)
+    ids = [str(r.get("character_id") or "").strip() for r in rows if str(r.get("character_id") or "").strip()]
+    labels = [id_to_label.get(cid, cid) for cid in ids]
+    return {
+        "novel_id": novel_id,
+        "characters": enriched,
+        "character_ids": ids,
+        "character_labels": labels,
+    }
 
 
 @router.get("/{novel_id}/chapters/{chapter_index}")
@@ -500,6 +521,45 @@ def run_mode_stream(novel_id: str, req: RunModeRequest, request: Request):
                         "state_updated": False,
                         "usage_metadata": opt_usage,
                         "content": "".join(opt_parts).strip(),
+                        "plan": None,
+                        "state": (st_final.model_dump(mode="json") if st_final else None),
+                        "next_status": None,
+                    },
+                )
+            elif req.mode == "init_state":
+                if await _disconnected():
+                    return
+                yield sse_pack("phase", {"name": "world_init"})
+                state_dump: Optional[Dict[str, Any]] = None
+                init_usage: Dict[str, Any] = {}
+                for item in agent.init_state_stream(
+                    novel_id=novel_id,
+                    user_task=llm_user_task,
+                    lore_tags=req.lore_tags,
+                    llm_options=llm_opts,
+                ):
+                    if await _disconnected():
+                        return
+                    txt = str(item.get("delta", "") or "")
+                    if txt:
+                        yield sse_pack("content", {"delta": txt})
+                    um = item.get("usage_metadata") or {}
+                    if isinstance(um, dict) and um:
+                        init_usage = um
+                    if item.get("done"):
+                        state_dump = item.get("state")
+                if not state_dump:
+                    raise ValueError("init_state stream failed: empty state")
+                st_final = load_state(novel_id)
+                yield sse_pack(
+                    "done",
+                    {
+                        "novel_id": novel_id,
+                        "mode": req.mode,
+                        "chapter_index": None,
+                        "state_updated": True,
+                        "usage_metadata": init_usage,
+                        "content": None,
                         "plan": None,
                         "state": (st_final.model_dump(mode="json") if st_final else None),
                         "next_status": None,

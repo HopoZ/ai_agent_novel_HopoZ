@@ -14,15 +14,71 @@ from agents._internal_marks import z7_module_mark
 _MODULE_REV = z7_module_mark("lj")
 
 
+def _extract_balanced_json_object(s: str, start: int) -> Optional[str]:
+    """
+    从 s[start] 起，按括号深度与字符串状态，截取与之匹配的最外层 {...}。
+    用于嵌套很深的 JSON；不能用非贪婪正则，否则会在第一个内层 `}` 处截断。
+    """
+    if start < 0 or start >= len(s) or s[start] != "{":
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    i = start
+    while i < len(s):
+        c = s[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif c == "\\":
+                escape = True
+            elif c == '"':
+                in_string = False
+            i += 1
+            continue
+        if c == '"':
+            in_string = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start : i + 1]
+        i += 1
+    return None
+
+
+def _extract_from_fenced_json_block(text: str) -> Optional[str]:
+    """``` 或 ```json 代码块内，从第一个 `{` 起做平衡括号截取。"""
+    for m in re.finditer(r"```(?:json)?\s*\n?", text):
+        inner_start = m.end()
+        fence_end = text.find("```", inner_start)
+        if fence_end == -1:
+            continue
+        inner = text[inner_start:fence_end]
+        brace = inner.find("{")
+        if brace == -1:
+            continue
+        obj = _extract_balanced_json_object(inner, brace)
+        if obj:
+            return obj
+    return None
+
+
 def extract_json_object(text: str) -> str:
     """
     从一段可能带多余内容的文本里，提取第一个 {...} 作为 JSON。
     """
-    fenced = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text)
+    fenced = _extract_from_fenced_json_block(text)
     if fenced:
-        return fenced.group(1)
+        return fenced
 
     start = text.find("{")
+    if start != -1:
+        balanced = _extract_balanced_json_object(text, start)
+        if balanced:
+            return balanced
+
     end = text.rfind("}")
     if start == -1 or end == -1 or end <= start:
         raise ValueError("No JSON object found in model output.")

@@ -23,30 +23,24 @@ _MODULE_REV = z7_module_mark("si")
 T = TypeVar("T")
 
 
-def invoke_pydantic_json(
+def parse_streamed_output_to_pydantic(
+    raw_text: str,
     model: Any,
     system: str,
-    human: str,
     root_model: Type[T],
     *,
-    return_usage: bool = False,
     log: Optional[logging.Logger] = None,
-) -> Union[T, Tuple[T, Dict[str, Any]]]:
+) -> T:
     """
-    调用模型并解析为 Pydantic 模型（带一次“修复 JSON”的重试；失败时再尝试第二轮修复）。
+    已有模型输出的整段文本（例如流式拼接后）时，按与 invoke_pydantic_json 相同的
+    「json_load_with_retry + 第二轮修复」流程解析为 Pydantic。
     """
     log = log or logger
-    messages = [SystemMessage(system), HumanMessage(human)]
 
     def llm_fix_invoke(fix_prompt: str) -> str:
         fix_messages = [SystemMessage(system), HumanMessage(fix_prompt)]
         resp = model.invoke(fix_messages)
         return parse_ai_text(resp)
-
-    log.info("Invoking JSON model ...")
-    resp = model.invoke(messages)
-    raw_text = parse_ai_text(resp)
-    usage = getattr(resp, "usage_metadata", None) or {}
 
     def parse_fn(json_dict: dict) -> T:
         return root_model.model_validate(json_dict)
@@ -93,10 +87,9 @@ def invoke_pydantic_json(
                         data = data[only_key]
         except Exception:
             pass
-        parsed = parse_fn(data)
-        return (parsed, usage) if return_usage else parsed
+        return parse_fn(data)
     except Exception as e1:
-        log.warning("Root JSON parse failed after retry: %s", e1)
+        log.warning("Streamed JSON parse failed after retry: %s", e1)
         raw_path = dump_debug("raw", raw_text)
         fixed_path: Optional[str] = None
         try:
@@ -119,12 +112,35 @@ def invoke_pydantic_json(
                     data2 = data2[model_name]
             except Exception:
                 pass
-            parsed2 = parse_fn(data2)
-            return (parsed2, usage) if return_usage else parsed2
+            return parse_fn(data2)
         except Exception as e2:
-            log.exception("Root JSON parse failed hard: %s", e2)
+            log.exception("Streamed JSON parse failed hard: %s", e2)
             raise ValueError(
                 "模型输出 JSON 解析失败（已尝试修复）。"
                 + (f" raw_dump={raw_path}" if raw_path else "")
                 + (f" fixed_dump={fixed_path}" if fixed_path else "")
-            )
+            ) from e2
+
+
+def invoke_pydantic_json(
+    model: Any,
+    system: str,
+    human: str,
+    root_model: Type[T],
+    *,
+    return_usage: bool = False,
+    log: Optional[logging.Logger] = None,
+) -> Union[T, Tuple[T, Dict[str, Any]]]:
+    """
+    调用模型并解析为 Pydantic 模型（带一次“修复 JSON”的重试；失败时再尝试第二轮修复）。
+    """
+    log = log or logger
+    messages = [SystemMessage(system), HumanMessage(human)]
+
+    log.info("Invoking JSON model ...")
+    resp = model.invoke(messages)
+    raw_text = parse_ai_text(resp)
+    usage = getattr(resp, "usage_metadata", None) or {}
+
+    parsed = parse_streamed_output_to_pydantic(raw_text, model, system, root_model, log=log)
+    return (parsed, usage) if return_usage else parsed

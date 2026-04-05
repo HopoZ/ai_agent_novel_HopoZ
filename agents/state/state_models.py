@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -39,6 +40,8 @@ class CharacterState(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
     # 兼容 LLM 常见输出：{"id": "..."} 或 {"character_id": "..."}
     character_id: str = Field(alias="id")
+    # 展示名（可与 id 相同；若模型把 slug 放在 id、把中文名放在 name，此处用于界面显示）
+    name: Optional[str] = None
     description: Optional[str] = None
 
     # 关系/动机/已知事实保持“总结型”，避免状态膨胀
@@ -66,10 +69,16 @@ class TimelineEvent(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _drop_timeline_chapter_index(cls, data):
-        if isinstance(data, dict):
-            return {k: v for k, v in data.items() if k != "chapter_index"}
-        return data
+    def _normalize_timeline_event(cls, data):
+        if not isinstance(data, dict):
+            return data
+        d = {k: v for k, v in data.items() if k != "chapter_index"}
+        # 兼容 LLM 常用别名：time / event
+        if d.get("time_slot") is None and d.get("time") is not None:
+            d["time_slot"] = d["time"]
+        if d.get("summary") is None and d.get("event") is not None:
+            d["summary"] = d["event"]
+        return d
 
 
 class WorldState(BaseModel):
@@ -80,6 +89,25 @@ class WorldState(BaseModel):
 
     timeline: List[TimelineEvent] = Field(default_factory=list)
     open_questions: List[str] = Field(default_factory=list)
+
+    @field_validator("key_rules", mode="before")
+    @classmethod
+    def _coerce_key_rules_values_to_str(cls, v):
+        # LLM 常把 key_rules 写成嵌套对象/数组；统一压成字符串以便下游 prompt 拼接
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            return v
+        out: Dict[str, str] = {}
+        for k, val in v.items():
+            key = str(k)
+            if isinstance(val, (dict, list)):
+                out[key] = json.dumps(val, ensure_ascii=False)
+            elif val is None:
+                out[key] = ""
+            else:
+                out[key] = str(val)
+        return out
 
     @field_validator("factions", mode="before")
     @classmethod

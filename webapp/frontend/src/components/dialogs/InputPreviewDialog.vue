@@ -44,12 +44,12 @@ function stageDisplayTitle(name: string): string {
   <el-dialog
     v-model="visible"
     class="input-preview-dialog"
-    title="模型 Input 预览"
+    title="运行前预览"
     width="85%"
     destroy-on-close
   >
     <p class="input-preview-lead muted">
-      以下为即将发给模型的分阶段提示词。确认无误后点击「确认并运行」；需要排查问题时可用「复制完整 JSON」。
+      以下为本次将分阶段使用的内容。确认后点击「确认并运行」。
     </p>
     <div v-if="inputPreviewData" class="input-preview-body">
       <el-descriptions :column="2" border size="small" class="input-meta-desc">
@@ -71,18 +71,15 @@ function stageDisplayTitle(name: string): string {
           :name="String(idx)"
         >
           <template #title>
-            <span class="stage-title-row">
-              <span class="stage-title-text">{{ stageDisplayTitle(st.name) }}</span>
-              <el-tag size="small" effect="plain" class="stage-name-tag">{{ st.name }}</el-tag>
-            </span>
+            <span class="stage-title-text">{{ stageDisplayTitle(st.name) }}</span>
           </template>
           <div class="stage-panels">
             <section class="prompt-block">
-              <header class="prompt-block-label">System</header>
+              <header class="prompt-block-label">系统</header>
               <div class="prompt-block-body">{{ st.system || "（空）" }}</div>
             </section>
             <section class="prompt-block prompt-block--human">
-              <header class="prompt-block-label">Human / User</header>
+              <header class="prompt-block-label">用户侧</header>
               <div class="prompt-block-body">{{ st.human || "（空）" }}</div>
             </section>
           </div>
@@ -92,7 +89,7 @@ function stageDisplayTitle(name: string): string {
     <div v-else class="muted">暂无预览数据，请关闭后重试。</div>
     <template #footer>
       <span class="dialog-footer input-preview-footer">
-        <el-button @click="emit('copyJson')" :disabled="!inputPreviewData">复制完整 JSON</el-button>
+        <el-button @click="emit('copyJson')" :disabled="!inputPreviewData">复制详情</el-button>
         <el-button @click="visible = false">关闭</el-button>
         <el-button
           type="primary"
@@ -142,17 +139,8 @@ function stageDisplayTitle(name: string): string {
 .input-stages-collapse :deep(.el-collapse-item__wrap) {
   border-bottom: 1px solid var(--el-border-color-lighter);
 }
-.stage-title-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
 .stage-title-text {
   font-size: 14px;
-}
-.stage-name-tag {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .stage-panels {
   display: flex;

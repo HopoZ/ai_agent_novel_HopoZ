@@ -134,7 +134,12 @@
               style="width:100%;"
               @change="onPovChange"
             >
-              <el-option v-for="cid in allCharacterOptions" :key="cid" :label="cid" :value="cid" />
+              <el-option
+                v-for="opt in allCharacterOptions"
+                :key="opt.id"
+                :label="opt.label"
+                :value="opt.id"
+              />
             </el-select>
           </el-form-item>
           <el-form-item label="快速多选角色（配角设定）">
@@ -151,7 +156,12 @@
               style="width:100%;"
               @change="onFocusChange"
             >
-              <el-option v-for="cid in allCharacterOptions" :key="`focus-${cid}`" :label="cid" :value="cid" />
+              <el-option
+                v-for="opt in allCharacterOptions"
+                :key="`focus-${opt.id}`"
+                :label="opt.label"
+                :value="opt.id"
+              />
             </el-select>
           </el-form-item>
           <el-form-item label="角色标签管理（本次会话）">
@@ -163,22 +173,12 @@
         </el-collapse-item>
 
         <el-collapse-item name="advanced" title="高级">
-          <el-form-item label="首次使用（未初始化世界）">
-            <el-button style="width:100%;" @click="runInitWorld" :disabled="running" plain type="warning">
-              初始化世界（init_state）
-            </el-button>
-            <div class="muted" style="margin-top:6px;">
-              新建小说后若尚未生成过完整 state，请先初始化；与下方三个写作按钮独立。
-            </div>
-          </el-form-item>
           <el-form-item label="章节预设名（可选）">
             <el-input v-model="form.chapterPresetName" placeholder="例如：重逢夜 / 石碑共鸣 / 古墟初探"></el-input>
           </el-form-item>
-          <el-divider content-position="left">模型采样</el-divider>
+          <el-divider content-position="left">模型采样（可选）</el-divider>
           <div class="muted" style="margin-bottom:8px;">
-            下面三项控制<strong>大模型怎么选词、单轮最多写多长</strong>，不改动你的小说数据/图谱逻辑。
-            与 <code>_init_llm</code> 一致：<strong>temperature={{ defaultLlmTemperature }}</strong>、<strong>max_tokens={{ defaultLlmMaxTokens }}</strong>；<code>top_p</code> 未在服务端写死，留空则请求里不传（由接口默认）。
-            同一次运行里：<strong>init / 规划 / 正文 / 修订 / 下章建议</strong>共用当前这组值。
+            调整随机性与单次回复长度。留空则用默认（temperature {{ defaultLlmTemperature }}，max_tokens {{ defaultLlmMaxTokens }}）。
           </div>
           <el-form-item :label="`temperature（默认 ${defaultLlmTemperature}）`">
             <el-input-number
@@ -191,7 +191,7 @@
               style="width:100%;"
             />
             <div class="muted" style="margin-top:6px;">
-              <strong>随机性</strong>：越高越敢发散、文风变化大；越低越稳、重复感强。规划 JSON 宜偏低或中等，正文可按喜好略调高。
+              <strong>随机性</strong>：越高文风变化越大；越低越稳。规划宜略低，正文可按喜好调高。
             </div>
           </el-form-item>
           <el-form-item label="top_p（可选）">
@@ -219,7 +219,7 @@
               style="width:100%;"
             />
             <div class="muted" style="margin-top:6px;">
-              <strong>本轮回复长度上限</strong>（token，约等于字数折算）。太小容易规划/正文被截断；太大更耗 token、更慢，且受供应商上限限制。
+              <strong>单次回复长度上限</strong>。过小易截断，过大更慢、更费。
             </div>
           </el-form-item>
         </el-collapse-item>
@@ -230,10 +230,10 @@
               v-model="form.currentMap"
               type="textarea"
               :rows="3"
-              placeholder="例如：青石镇东市、地下遗迹二层、星舰舰桥——会作为「系统注入约束」一并发给模型"
+              placeholder="例如：青石镇东市、地下遗迹二层、星舰舰桥"
             />
             <div class="muted" style="margin-top:6px;">
-              留空则不发；填写后会在规划/正文等与任务合并，可在 Input 预览里看到完整 Human。
+              留空不写；填写后会与本次写作要求一并使用。
             </div>
           </el-form-item>
           <el-form-item label="任务 / 素材">
@@ -241,14 +241,16 @@
               v-model="form.userTask"
               type="textarea"
               :rows="7"
-              placeholder="生成内容：本章情节与写作要求。扩写内容：粘贴待扩写的短文/梗概（将扩至约4000–5000字）。优化内容：粘贴片段或说明希望改进的方向（输出建议，不写整章）。"
+              placeholder="本章要写的情节与要求；或扩写用的短文；或待优化的片段。"
             ></el-input>
           </el-form-item>
         </el-collapse-item>
       </el-collapse>
 
       <div class="mid-actions-sticky">
-        <div class="muted" style="margin-bottom:8px;">写作（先预览 Input，确认后再流式运行）</div>
+        <div class="muted" style="margin-bottom:8px;">
+          写作：先预览，再运行。「本书初始化」生成整书 NovelState，建议适当提高 max_tokens。
+        </div>
         <div style="display:flex; flex-direction:column; gap:8px; width:100%;">
           <el-button type="primary" @click="runGenerate" :disabled="running" :loading="running">
             {{ running ? "运行中..." : "生成内容" }}
@@ -256,12 +258,12 @@
           <el-button type="success" plain @click="runExpand" :disabled="running">
             扩写内容
           </el-button>
+          <el-button type="warning" plain @click="runInitWorld" :disabled="running">
+            本书初始化
+          </el-button>
           <el-button type="info" plain @click="runOptimize" :disabled="running">
             优化内容
           </el-button>
-          <div class="muted" style="margin-top:4px; line-height:1.45;">
-            优化：无需勾选左侧标签（将按仓库内全部 lores 注入）。先写「本章任务」素材，点按钮后在弹窗填写优化方向（可空）。
-          </div>
           <el-button v-if="running" type="danger" @click="abortRun">中止生成</el-button>
         </div>
       </div>
@@ -282,7 +284,7 @@ defineProps<{
   anchorsLoading: boolean;
   anchors: Array<{ id: string; label: string; type: string; time_slot: string }>;
   inferredTimeSlotHint: string;
-  allCharacterOptions: string[];
+  allCharacterOptions: Array<{ id: string; label: string }>;
   previewingInput: boolean;
   onMidSectionChange: (v: string | string[]) => void;
   openCreateDialog: () => void;
@@ -291,8 +293,8 @@ defineProps<{
   openRoleManager: () => void;
   runGenerate: () => void;
   runExpand: () => void;
-  runOptimize: () => void;
   runInitWorld: () => void;
+  runOptimize: () => void;
   abortRun: () => void;
 }>();
 </script>

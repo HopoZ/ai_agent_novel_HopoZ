@@ -22,7 +22,7 @@ const emit = defineEmits<{ create: [] }>();
         <el-input v-model="povCharacterId" placeholder="例如：主角名/角色ID（按你的设定文本）"></el-input>
       </el-form-item>
       <div class="muted" style="margin-top:6px;">
-        使用左侧“设定标签”的当前勾选作为本小说 lorebook。
+        将使用左侧当前勾选的设定；创建完成后会自动准备好本书的世界观与状态。
       </div>
     </el-form>
     <template #footer>

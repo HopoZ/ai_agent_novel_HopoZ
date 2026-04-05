@@ -3,7 +3,7 @@ const visible = defineModel<boolean>({ default: false });
 const characterTagDraft = defineModel<string>("characterTagDraft", { default: "" });
 
 defineProps<{
-  allCharacterOptions: string[];
+  allCharacterOptions: Array<{ id: string; label: string }>;
 }>();
 
 const emit = defineEmits<{
@@ -24,12 +24,12 @@ const emit = defineEmits<{
       <el-form-item label="当前可选标签">
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
           <el-tag
-            v-for="cid in allCharacterOptions"
-            :key="`mg-${cid}`"
+            v-for="opt in allCharacterOptions"
+            :key="`mg-${opt.id}`"
             closable
-            @close="emit('remove', cid)"
+            @close="emit('remove', opt.id)"
           >
-            {{ cid }}
+            {{ opt.label }}
           </el-tag>
         </div>
         <div class="muted" style="margin-top:6px;">

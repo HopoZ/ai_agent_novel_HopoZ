@@ -19,13 +19,28 @@
     <el-divider></el-divider>
     <el-tabs :model-value="rightTab" @update:model-value="onRightTabChange" class="right-tabs">
       <el-tab-pane label="文本输出" name="result">
-        <pre ref="resultPreRef" class="result-pre" v-text="resultText || (running ? '（进行中，等待正文输出...）' : '（本次运行暂无正文输出）')"></pre>
+        <pre
+          ref="resultPreRef"
+          class="result-pre"
+          v-text="resultText || (running ? '（进行中，等待正文输出...）' : '（本次运行暂无正文输出）')"
+          @scroll.passive="onResultScroll"
+        ></pre>
       </el-tab-pane>
       <el-tab-pane label="下章建议" name="next">
-        <pre ref="nextPreRef" class="result-pre" v-text="nextStatusText || (running ? '（生成中，完成后将展示下章建议）' : '（本次运行暂无下章建议）')"></pre>
+        <pre
+          ref="nextPreRef"
+          class="result-pre"
+          v-text="nextStatusText || (running ? '（生成中，完成后将展示下章建议）' : '（本次运行暂无下章建议）')"
+          @scroll.passive="onNextScroll"
+        ></pre>
       </el-tab-pane>
       <el-tab-pane label="规划流" name="plan">
-        <pre ref="planPreRef" class="result-pre" v-text="planStreamText || (running ? '（进行中，等待规划流输出...）' : '（本次运行暂无规划流输出）')"></pre>
+        <pre
+          ref="planPreRef"
+          class="result-pre"
+          v-text="planStreamText || (running ? '（进行中，等待规划流输出...）' : '（本次运行暂无规划流输出）')"
+          @scroll.passive="onPlanScroll"
+        ></pre>
       </el-tab-pane>
       <el-tab-pane label="图谱可视化" name="graph">
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -62,26 +77,77 @@ const props = defineProps<{
   openGraphDialog: () => void;
 }>();
 
+const STICKY_BOTTOM_PX = 72;
+
 const resultPreRef = ref<HTMLElement | null>(null);
 const nextPreRef = ref<HTMLElement | null>(null);
 const planPreRef = ref<HTMLElement | null>(null);
 
-async function scrollActiveOutputToBottom() {
+/** 各输出区：仅在「靠近底部」时流式更新才自动滚到底，上滚阅读时不抢滚动条 */
+const stickResultBottom = ref(true);
+const stickNextBottom = ref(true);
+const stickPlanBottom = ref(true);
+
+function distFromBottom(el: HTMLElement): number {
+  return el.scrollHeight - el.scrollTop - el.clientHeight;
+}
+
+function onResultScroll() {
+  const el = resultPreRef.value;
+  if (el) stickResultBottom.value = distFromBottom(el) <= STICKY_BOTTOM_PX;
+}
+function onNextScroll() {
+  const el = nextPreRef.value;
+  if (el) stickNextBottom.value = distFromBottom(el) <= STICKY_BOTTOM_PX;
+}
+function onPlanScroll() {
+  const el = planPreRef.value;
+  if (el) stickPlanBottom.value = distFromBottom(el) <= STICKY_BOTTOM_PX;
+}
+
+async function scrollResultToBottomIfSticky() {
   await nextTick();
-  let el: HTMLElement | null = null;
-  if (props.rightTab === "result") el = resultPreRef.value;
-  if (props.rightTab === "next") el = nextPreRef.value;
-  if (props.rightTab === "plan") el = planPreRef.value;
-  if (!el) return;
+  const el = resultPreRef.value;
+  if (!el || !stickResultBottom.value) return;
+  el.scrollTop = el.scrollHeight;
+}
+async function scrollNextToBottomIfSticky() {
+  await nextTick();
+  const el = nextPreRef.value;
+  if (!el || !stickNextBottom.value) return;
+  el.scrollTop = el.scrollHeight;
+}
+async function scrollPlanToBottomIfSticky() {
+  await nextTick();
+  const el = planPreRef.value;
+  if (!el || !stickPlanBottom.value) return;
   el.scrollTop = el.scrollHeight;
 }
 
+watch(() => props.resultText, () => void scrollResultToBottomIfSticky(), { flush: "post" });
+watch(() => props.nextStatusText, () => void scrollNextToBottomIfSticky(), { flush: "post" });
+watch(() => props.planStreamText, () => void scrollPlanToBottomIfSticky(), { flush: "post" });
+
+/** 切换 Tab 时默认跟随到底（方便直接看到最新块） */
 watch(
-  () => [props.resultText, props.nextStatusText, props.planStreamText, props.rightTab],
-  () => {
-    void scrollActiveOutputToBottom();
-  },
-  { flush: "post" }
+  () => props.rightTab,
+  (tab) => {
+    void nextTick(() => {
+      if (tab === "result") {
+        stickResultBottom.value = true;
+        const el = resultPreRef.value;
+        if (el) el.scrollTop = el.scrollHeight;
+      } else if (tab === "next") {
+        stickNextBottom.value = true;
+        const el = nextPreRef.value;
+        if (el) el.scrollTop = el.scrollHeight;
+      } else if (tab === "plan") {
+        stickPlanBottom.value = true;
+        const el = planPreRef.value;
+        if (el) el.scrollTop = el.scrollHeight;
+      }
+    });
+  }
 );
 </script>
 
