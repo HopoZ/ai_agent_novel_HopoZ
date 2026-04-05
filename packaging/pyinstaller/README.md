@@ -2,7 +2,7 @@
 
 目标：生成 **`novel-backend.exe`**，复制到 **`electron/resources/backend/`**，再执行 `cd electron && npm run dist`，安装包即可在无 Python 的机器上由 Electron 启动该 exe。
 
-端到端发布（含一键脚本）见 **[`learning/ELECTRON_RELEASE.md`](../../learning/ELECTRON_RELEASE.md)**。
+端到端发布（含一键脚本）见 **[`electron/ELECTRON_RELEASE.md`](../../electron/ELECTRON_RELEASE.md)**。
 
 ## 1. 环境
 

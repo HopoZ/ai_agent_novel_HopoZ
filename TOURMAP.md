@@ -25,7 +25,7 @@
   - 图谱与章节编辑仍走 `graph_tables` / `storage` 原 API，底层由 `novel_sqlite` 写入 `novel.db`。
 
 - [x] **Electron Windows 安装包（NSIS + PyInstaller 后端）**
-  - 一键脚本 `build-windows-release.bat`；安装版数据在 exe 同级 `data/`；Web 内首次引导、打开输入/输出目录；详见 [learning/ELECTRON_RELEASE.md](../learning/ELECTRON_RELEASE.md)。
+  - 一键脚本 `build-windows-release.bat`；安装版数据在 exe 同级 `data/`；Web 内首次引导、打开输入/输出目录；详见 [electron/ELECTRON_RELEASE.md](../electron/ELECTRON_RELEASE.md)。
 
 - [x] **流式输出与右侧面板体验优化**
   - 右侧状态文案对齐当前真实流程（移除 auto_init 误导信息）。
@@ -40,7 +40,7 @@
 ## TODO（待完成）
 
 - [ ] **Electron 安装包持续维护**
-  - 发布流程与踩坑记录：[learning/ELECTRON_RELEASE.md](../learning/ELECTRON_RELEASE.md)；详细参数见 [electron/README.md](../electron/README.md)、[packaging/pyinstaller/README.md](../packaging/pyinstaller/README.md)。
+  - 发布流程与踩坑记录：[electron/ELECTRON_RELEASE.md](../electron/ELECTRON_RELEASE.md)；详细参数见 [electron/README.md](../electron/README.md)、[packaging/pyinstaller/README.md](../packaging/pyinstaller/README.md)。
   - 构建产物勿入库：见根目录 `.gitignore`（`electron/release/`、`dist/`、`novel-backend.spec`、内置 `novel-backend.exe` 等）。
 
 - [ ] **知识图谱可视化继续重构完善**

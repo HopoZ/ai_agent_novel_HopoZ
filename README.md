@@ -40,7 +40,9 @@ DEEPSEEK_API_KEY=<your_api_key>
 
 将 Markdown 设定放入 `lores/`（相对路径即标签空间，供勾选与注入）。
 
-### 4. 启动 Web（推荐）
+
+### 开始（三选一）
+####  启动 Web
 
 在**仓库根目录**执行：
 
@@ -53,7 +55,7 @@ python -m uvicorn webapp.backend.server:app --reload --port 8000
 - 启动时会尝试构建前端（`webapp/frontend` → `dist/`）。若已自行构建或想跳过：设置环境变量 `SKIP_FRONTEND_BUILD=1`。
 - 单独开发前端：`cd webapp/frontend && npm install && npm run dev`（代理与端口以 `vite.config.ts` 为准）。
 
-### 5. 终端 CLI（可选）
+####  终端 CLI
 
 不经过 Web 状态机，仅多轮对话 + Lore 原文注入：
 
@@ -63,29 +65,9 @@ python -m cli
 
 默认使用 DeepSeek **深度思考**模型（`deepseek-reasoner`），终端流式区分「深度思考」与「正文」，会话文件与多轮历史仅保留正文以便 API 兼容。加 `--fast` 可改用 `deepseek-chat`。
 
-### 6. Electron 桌面壳（可选）
+####  Electron 桌面壳
 
-使用 [electron-vite](https://electron-vite.org/) + [electron-builder](https://www.electron.build/)：开发时子进程启动 `uvicorn`；可打 **Windows 一键安装包**（详见 [`electron/README.md`](./electron/README.md)）。
-
-```bash
-cd electron && npm install && npm run dev
-```
-
-打包 **Windows 安装程序**（含前端构建 + PyInstaller 后端 + NSIS，适合发 Release）：
-
-```powershell
-.\scripts\build-windows-release.ps1
-```
-
-仅打 Electron 壳（开发机依赖本机 Python）：
-
-```bash
-cd electron && npm run dist
-```
-
-详见 [`electron/README.md`](./electron/README.md)。若安装 Electron 二进制失败，见其中的镜像说明。
-
-**发布到 GitHub Releases**（只上传安装包、不把大二进制提交进仓库）：流程与排错见 **[`learning/ELECTRON_RELEASE.md`](./learning/ELECTRON_RELEASE.md)**。构建产物（`electron/release/`、`dist/novel-backend.exe` 等）已写入 **`.gitignore`**。
+下载release下的exe
 
 ---
 
