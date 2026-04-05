@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from agents._internal_marks import z7_module_mark
+from agents.persistence.env_paths import get_outputs_root
 from langchain.messages import AIMessage
 
 
@@ -23,13 +24,14 @@ def safe_filename(name: str, fallback: str = "novel") -> str:
 
 
 def write_outputs_txt(novel_title: str, chapter_index: int, content: str) -> str:
-    os.makedirs("outputs", exist_ok=True)
+    out_root = get_outputs_root()
+    os.makedirs(out_root, exist_ok=True)
     ts = datetime.now().strftime("%m%d_%H%M%S")
     title = safe_filename(novel_title, fallback="novel")
     # 输出文件名不再使用“第几章”概念（章节可重排/插入），仅用小说名 + 时间戳保证可读与唯一性。
     # chapter_index 仍保留在 storage/novels/<id>/novel.db 的 chapters 表记录内。
     filename = f"{title}_{ts}.txt"
-    path = os.path.join("outputs", filename)
+    path = os.path.join(str(out_root), filename)
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     return path

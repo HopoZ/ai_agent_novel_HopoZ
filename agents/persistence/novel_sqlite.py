@@ -12,15 +12,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
+from agents.persistence.env_paths import get_storage_root
 from agents.state.state_models import ChapterRecord
 
-APP_STORAGE_DIR = Path("storage")
 SCHEMA_VERSION = 1
 
 
 def _novel_dir(novel_id: str) -> Path:
     UUID(novel_id)
-    return APP_STORAGE_DIR / "novels" / novel_id
+    return get_storage_root() / "novels" / novel_id
 
 
 def get_db_path(novel_id: str) -> Path:

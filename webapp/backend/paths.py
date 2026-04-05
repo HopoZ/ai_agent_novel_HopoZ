@@ -2,7 +2,9 @@
 
 from pathlib import Path
 
+from agents.persistence.env_paths import get_storage_root
+
 VITE_FRONTEND_DIR = Path("webapp/frontend")
 VITE_DIST_DIR = VITE_FRONTEND_DIR / "dist"
 LEGACY_INDEX_HTML = Path("webapp/templates/index.html")
-STORAGE_NOVELS_DIR = Path("storage") / "novels"
+STORAGE_NOVELS_DIR = get_storage_root() / "novels"

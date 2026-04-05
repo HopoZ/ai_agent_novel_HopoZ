@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from agents.persistence import novel_sqlite
+from agents.persistence.env_paths import get_storage_root
 from agents.persistence.storage import (
     get_chapters_dir,
     list_chapters,
@@ -19,7 +20,7 @@ from agents.state.state_models import ChapterRecord, NovelState
 
 
 def _novel_dir(novel_id: str) -> Path:
-    return Path("storage") / "novels" / novel_id
+    return get_storage_root() / "novels" / novel_id
 
 
 def new_timeline_event_id() -> str:

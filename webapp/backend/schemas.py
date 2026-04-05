@@ -133,3 +133,7 @@ class GraphEdgePatchRequest(BaseModel):
     label: Optional[str] = None
     op: str = "set"  # set | delete
 
+
+class ApiKeyUpdateRequest(BaseModel):
+    api_key: str = ""
+

@@ -5,10 +5,12 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from agents.persistence.env_paths import get_storage_root
+
 from .loader import LoreLoader
 
 
-SUMMARY_DIR = Path("storage") / "lore_summaries"
+SUMMARY_DIR = get_storage_root() / "lore_summaries"
 
 
 def _summary_id(tags: List[str], source_hash: str, mode: str) -> str:

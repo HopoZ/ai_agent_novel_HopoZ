@@ -3,11 +3,39 @@
     <div class="wrap">
       <header class="app-header">
         <div class="app-header-text">
-          <p class="app-tagline">规划 · 写作 · 图谱</p>
-          <h1 class="app-title">AI 小说创作代理</h1>
+          <div class="app-header-top">
+            <el-button text type="primary" size="small" @click="openLoresDir">打开输入</el-button>
+            <div class="app-header-titles">
+              <p class="app-tagline">规划 · 写作 · 图谱</p>
+              <h1 class="app-title">AI 小说创作代理</h1>
+            </div>
+            <div class="app-header-actions">
+              <el-button text type="primary" size="small" @click="openOutputsDir">打开输出</el-button>
+              <el-button type="primary" plain size="small" @click="apiSettingsVisible = true">
+                API 密钥
+              </el-button>
+            </div>
+          </div>
         </div>
         <div class="app-header-accent" aria-hidden="true"></div>
       </header>
+
+      <el-alert
+        v-if="firstRunHintVisible"
+        class="first-run-alert"
+        type="info"
+        show-icon
+        closable
+        title="首次使用请先完成"
+        @close="dismissFirstRun"
+      >
+        <ol class="first-run-list">
+          <li>点击右上角「API 密钥」，填写 DeepSeek API（或在本机设置环境变量 <code>DEEPSEEK_API_KEY</code>）。</li>
+          <li>点击左侧「打开输入」，在 <strong>lores</strong> 文件夹内按子目录放入 <strong>.md</strong> 设定（路径即标签）；保存后左侧勾选标签。</li>
+          <li>写作生成的正文在「打开输出」对应目录（与开发时仓库根下 <code>outputs/</code> 相同含义）。</li>
+        </ol>
+        <p class="first-run-muted">桌面安装版可一键打开文件夹；仅用浏览器开发时，请直接使用仓库里的 <code>lores/</code>、<code>outputs/</code>。</p>
+      </el-alert>
 
       <div class="main-layout" :class="{ 'main-layout--stack': layoutStacked }">
       <div class="left-pane" :style="{ width: `${leftPanelWidth}px` }">
@@ -126,12 +154,15 @@
     :previewing-input="previewingInput"
     @confirm="confirmOptimizeIntent"
   />
+
+  <ApiSettingsDialog v-model="apiSettingsVisible" />
 </template>
 
 <script lang="ts" setup>
 import { computed, nextTick, onMounted, provide, reactive, ref, toRef, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { apiJson, apiSse, logDebug } from "./api/client";
+import { getNovelAgentDesktop } from "./desktop";
 import { usePanelResize } from "./composables/usePanelResize";
 import { GRAPH_INJECTION_KEY, useGraph } from "./composables/useGraph";
 import TagPanel from "./components/TagPanel.vue";
@@ -144,6 +175,7 @@ import InputPreviewDialog from "./components/dialogs/InputPreviewDialog.vue";
 import RoleManagerDialog from "./components/dialogs/RoleManagerDialog.vue";
 import NextChapterHintDialog from "./components/dialogs/NextChapterHintDialog.vue";
 import OptimizeIntentDialog from "./components/dialogs/OptimizeIntentDialog.vue";
+import ApiSettingsDialog from "./components/dialogs/ApiSettingsDialog.vue";
 
 type AppRunMode =
   | "init_state"
@@ -239,6 +271,66 @@ const nextChapterHintDraft = ref("");
 
 const optimizeIntentVisible = ref(false);
 const optimizeIntentDraft = ref("");
+const apiSettingsVisible = ref(false);
+
+const FIRST_RUN_KEY = "novel-agent-onboarding-dismissed-v1";
+const firstRunHintVisible = ref(false);
+
+type SettingsResponse = {
+  storage_root?: string;
+  lores_dir?: string;
+  outputs_dir?: string;
+  deepseek_api_key_configured?: boolean;
+};
+const settingsPaths = ref<SettingsResponse | null>(null);
+
+async function fetchSettingsPaths() {
+  try {
+    const res = (await apiJson("/api/settings", "GET", null)) as SettingsResponse;
+    settingsPaths.value = res;
+  } catch (e: unknown) {
+    logDebug("fetchSettingsPaths failed: " + String(e));
+  }
+}
+
+function dismissFirstRun() {
+  try {
+    localStorage.setItem(FIRST_RUN_KEY, "1");
+  } catch {
+    /* ignore */
+  }
+  firstRunHintVisible.value = false;
+}
+
+async function openDirByPath(absPath: string | undefined, label: string) {
+  const p = (absPath || "").trim();
+  if (!p) {
+    ElMessage.warning(`${label}路径未就绪，请稍后重试。`);
+    return;
+  }
+  const desk = getNovelAgentDesktop();
+  if (desk?.openPath) {
+    const r = await desk.openPath(p);
+    if (!r.ok) {
+      ElMessage.error(r.error || "无法打开文件夹");
+    }
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(p);
+    ElMessage.success(`已复制路径，请手动打开：${label}`);
+  } catch {
+    ElMessage.info(`${label}：${p}`);
+  }
+}
+
+function openLoresDir() {
+  return openDirByPath(settingsPaths.value?.lores_dir, "输入（lores）");
+}
+
+function openOutputsDir() {
+  return openDirByPath(settingsPaths.value?.outputs_dir, "输出（outputs）");
+}
 /** 优化弹窗确认后、写入本次 preview/run 的 user_task 附加段（buildRunPayload 消费后清空） */
 const pendingOptimizeDirection = ref("");
 /** 从「下章提示」写入任务并打开 Input 预览时，若用户关闭预览未运行，则恢复中间栏任务原文本 */
@@ -975,6 +1067,14 @@ function validateTimePlan(): boolean {
 
 onMounted(async () => {
   try {
+    try {
+      if (!localStorage.getItem(FIRST_RUN_KEY)) {
+        firstRunHintVisible.value = true;
+      }
+    } catch {
+      firstRunHintVisible.value = true;
+    }
+    await fetchSettingsPaths();
     await loadTags();
     await loadNovels();
     await loadAnchors();
@@ -1007,6 +1107,40 @@ watch(inputPreviewVisible, (visible, prevVisible) => {
 </script>
 
 <style scoped>
+.app-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.app-header-titles {
+  min-width: 0;
+  flex: 1;
+  text-align: center;
+}
+.app-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.first-run-alert {
+  margin-bottom: 16px;
+}
+.first-run-list {
+  margin: 8px 0 0;
+  padding-left: 1.25em;
+  line-height: 1.65;
+}
+.first-run-list code {
+  font-size: 12px;
+}
+.first-run-muted {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--lit-ink-muted, #606266);
+}
 .wrap {
   width: 100%;
   max-width: 1480px;

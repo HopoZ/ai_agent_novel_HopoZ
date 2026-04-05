@@ -7,6 +7,16 @@
 *.tmp
 /webapp/frontend/dist
 /webapp/frontend/node_modules
+/electron/node_modules
+/electron/out
+/electron/release
+# 内置后端可执行文件（本地 PyInstaller 生成后复制；发布到 GitHub Releases 上传安装包即可，勿提交二进制）
+/electron/resources/backend/*.exe
+# PyInstaller 仓库根产物与缓存
+/dist/
+/build/
+/novel-backend.spec
+/novel-backend-test.spec
 /mobile/src/_imported_lores
 
 # Directory-level docs generated for internal notes
@@ -14,3 +24,14 @@
 /tests/README.md
 /SECURITY_FINGERPRINT.md
 ARCHITECTURE.md
+electron/electron-env.d.ts
+electron/electron.vite.config.ts
+electron/package-lock.json
+electron/package.json
+electron/README.md
+electron/tsconfig.json
+electron/resources/backend/README.txt
+electron/src/main/index.ts
+electron/src/preload/index.ts
+learning/ELECTRON_RELEASE.md
+learning/README.md

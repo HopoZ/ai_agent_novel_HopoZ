@@ -6,13 +6,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple, Type, TypeVar, Union
 
 from langchain.messages import HumanMessage, SystemMessage
 
 from agents._internal_marks import z7_module_mark
+from agents.persistence.env_paths import get_outputs_root
 from agents.text_utils import parse_ai_text
 
 from .llm_json import extract_json_object, json_load_with_retry
@@ -53,12 +53,12 @@ def invoke_pydantic_json(
 
     def dump_debug(name: str, text: str) -> Optional[str]:
         try:
-            os.makedirs("outputs", exist_ok=True)
+            out_dir = get_outputs_root()
+            out_dir.mkdir(parents=True, exist_ok=True)
             ts = datetime.now().strftime("%m%d_%H%M%S")
-            path = os.path.join("outputs", f"debug_json_{name}_{ts}.txt")
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(text or "")
-            return path
+            path = out_dir / f"debug_json_{name}_{ts}.txt"
+            path.write_text(text or "", encoding="utf-8")
+            return str(path.resolve())
         except Exception:
             return None
 

@@ -5,6 +5,7 @@ FastAPI 应用工厂：中间件、静态资源、子路由挂载。
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,13 +13,22 @@ from fastapi.staticfiles import StaticFiles
 
 from webapp.backend.frontend_assets import run_frontend_startup
 from webapp.backend.paths import VITE_DIST_DIR, VITE_FRONTEND_DIR
-from webapp.backend.routes import graph, lore, novels, pages
+from webapp.backend.routes import graph, lore, novels, pages, settings
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger("webapp.backend.server")
+
+
+def _ensure_packaged_relative_dirs() -> None:
+    """
+    PyInstaller 对空目录的 --add-data 可能不产生 webapp/static，Starlette StaticFiles 会报
+    Directory does not exist。启动时补建相对路径目录（cwd 在冻结模式下已为 _MEIPASS）。
+    """
+    for rel in ("webapp/static", "webapp/templates"):
+        Path(rel).mkdir(parents=True, exist_ok=True)
 
 
 def create_app() -> FastAPI:
@@ -32,6 +42,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    _ensure_packaged_relative_dirs()
     app.mount("/static", StaticFiles(directory="webapp/static"), name="static")
 
     @app.on_event("startup")
@@ -51,6 +62,7 @@ def create_app() -> FastAPI:
             raise
 
     app.include_router(pages.router)
+    app.include_router(settings.router, prefix="/api")
     app.include_router(lore.router, prefix="/api/lore")
     app.include_router(novels.router, prefix="/api/novels")
     app.include_router(graph.router, prefix="/api/novels")

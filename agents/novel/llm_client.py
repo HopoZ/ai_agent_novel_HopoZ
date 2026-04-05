@@ -12,20 +12,37 @@ from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 
 from agents._internal_marks import z7_module_mark
+from agents.persistence.user_settings import get_saved_deepseek_api_key
 
 logger = logging.getLogger("agents.novel.llm_client")
 _MODULE_REV = z7_module_mark("lc")
 
 
-def init_deepseek_chat():
+def resolve_deepseek_api_key() -> str | None:
     """
-    构造默认 DeepSeek Chat 模型（从环境变量读取 DEEPSEEK_API_KEY）。
-    Web 服务可在未调用前不触发，以便无 key 时仍能启动。
+    解析顺序：环境变量 DEEPSEEK_API_KEY（含 .env）> 本地 user_settings 文件。
     """
     load_dotenv()
-    api_key = os.getenv("DEEPSEEK_API_KEY")
+    env_key = (os.getenv("DEEPSEEK_API_KEY") or "").strip()
+    if env_key:
+        return env_key
+    saved = get_saved_deepseek_api_key()
+    if saved:
+        return saved
+    return None
+
+
+def init_deepseek_chat():
+    """
+    构造默认 DeepSeek Chat 模型（DEEPSEEK_API_KEY：环境变量或 Web「API 密钥」保存）。
+    Web 服务可在未调用前不触发，以便无 key 时仍能启动。
+    """
+    api_key = resolve_deepseek_api_key()
     if not api_key:
-        raise ValueError("请在 .env 文件中添加 DEEPSEEK_API_KEY")
+        raise ValueError(
+            "未配置 DeepSeek API Key：请在项目根目录 .env 中设置 DEEPSEEK_API_KEY，"
+            "或在网页右上角「API 密钥」中填写并保存。"
+        )
 
     return init_chat_model(
         "deepseek-chat",

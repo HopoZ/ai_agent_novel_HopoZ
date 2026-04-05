@@ -1,12 +1,23 @@
 # 负责加载设定文件并构建创作百科全书的上下文信息
 
+import os
 from pathlib import Path
 from typing import Dict, List
 
+from agents.persistence.env_paths import get_storage_root, try_get_lores_dir_from_env
+
+
 class LoreLoader:
     def __init__(self, data_path="lores"):
-        # Web 启动时工作目录可能变化；把相对路径固定到仓库根目录
-        # agents/lore/loader.py -> 仓库根为向上两级
+        o = try_get_lores_dir_from_env()
+        if o is not None:
+            self.data_path = o
+            return
+        # 与 NOVEL_AGENT_STORAGE_DIR 为同一应用数据根时，lores 落在其下 lores/（Electron 安装版）
+        if os.environ.get("NOVEL_AGENT_STORAGE_DIR", "").strip():
+            self.data_path = get_storage_root() / "lores"
+            return
+        # 开发 / 源码：相对路径固定到仓库根（agents/lore/loader.py -> 向上两级）
         repo_root = Path(__file__).resolve().parents[2]
         p = Path(data_path)
         self.data_path = p if p.is_absolute() else (repo_root / p)

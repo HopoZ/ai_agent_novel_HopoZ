@@ -24,6 +24,9 @@
 - [x] **单本小说 SQLite 落地**
   - 图谱与章节编辑仍走 `graph_tables` / `storage` 原 API，底层由 `novel_sqlite` 写入 `novel.db`。
 
+- [x] **Electron Windows 安装包（NSIS + PyInstaller 后端）**
+  - 一键脚本 `build-windows-release.bat`；安装版数据在 exe 同级 `data/`；Web 内首次引导、打开输入/输出目录；详见 [learning/ELECTRON_RELEASE.md](../learning/ELECTRON_RELEASE.md)。
+
 - [x] **流式输出与右侧面板体验优化**
   - 右侧状态文案对齐当前真实流程（移除 auto_init 误导信息）。
   - 规划流/正文流/下章建议的空态提示改为运行态动态提示。
@@ -36,9 +39,9 @@
 
 ## TODO（待完成）
 
-- [ ] **项目打包为 EXE**
-  - 明确目标：仅后端服务、前后端一体、还是离线桌面版。
-  - 产物要求：单文件/目录版、配置外置、日志与 storage 路径策略。
+- [ ] **Electron 安装包持续维护**
+  - 发布流程与踩坑记录：[learning/ELECTRON_RELEASE.md](../learning/ELECTRON_RELEASE.md)；详细参数见 [electron/README.md](../electron/README.md)、[packaging/pyinstaller/README.md](../packaging/pyinstaller/README.md)。
+  - 构建产物勿入库：见根目录 `.gitignore`（`electron/release/`、`dist/`、`novel-backend.spec`、内置 `novel-backend.exe` 等）。
 
 - [ ] **知识图谱可视化继续重构完善**
   - 优化大图性能（节点多时布局、缩放、渲染帧率）。

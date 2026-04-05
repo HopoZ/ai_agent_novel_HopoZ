@@ -6,13 +6,13 @@ from typing import List, Optional
 from uuid import UUID
 
 from agents.persistence import novel_sqlite
+from agents.persistence.env_paths import get_storage_root
 from agents.state.state_models import ChapterRecord, ContinuityState, NovelMeta, NovelState, WorldState
 
 
-APP_STORAGE_DIR = Path("storage")
 def _novel_dir(novel_id: str) -> Path:
     UUID(novel_id)
-    return APP_STORAGE_DIR / "novels" / novel_id
+    return get_storage_root() / "novels" / novel_id
 
 
 def get_chapters_dir(novel_id: str) -> Path:

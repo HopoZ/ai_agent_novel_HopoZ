@@ -14,7 +14,7 @@
 
 | 层级 | 技术 |
 |------|------|
-| 前端 | Vue 3、TypeScript、Vite、Element Plus、ECharts |
+| 前端 | Vue 3、TypeScript、Vite、Element Plus、ECharts；可选 Electron 桌面壳 |
 | 后端 | Python 3、FastAPI、LangChain（DeepSeek API） |
 | 领域 | `NovelAgent`、状态压缩与合并、图谱四表持久化、Lore 摘要缓存 |
 
@@ -63,6 +63,30 @@ python -m cli
 
 默认使用 DeepSeek **深度思考**模型（`deepseek-reasoner`），终端流式区分「深度思考」与「正文」，会话文件与多轮历史仅保留正文以便 API 兼容。加 `--fast` 可改用 `deepseek-chat`。
 
+### 6. Electron 桌面壳（可选）
+
+使用 [electron-vite](https://electron-vite.org/) + [electron-builder](https://www.electron.build/)：开发时子进程启动 `uvicorn`；可打 **Windows 一键安装包**（详见 [`electron/README.md`](./electron/README.md)）。
+
+```bash
+cd electron && npm install && npm run dev
+```
+
+打包 **Windows 安装程序**（含前端构建 + PyInstaller 后端 + NSIS，适合发 Release）：
+
+```powershell
+.\scripts\build-windows-release.ps1
+```
+
+仅打 Electron 壳（开发机依赖本机 Python）：
+
+```bash
+cd electron && npm run dist
+```
+
+详见 [`electron/README.md`](./electron/README.md)。若安装 Electron 二进制失败，见其中的镜像说明。
+
+**发布到 GitHub Releases**（只上传安装包、不把大二进制提交进仓库）：流程与排错见 **[`learning/ELECTRON_RELEASE.md`](./learning/ELECTRON_RELEASE.md)**。构建产物（`electron/release/`、`dist/novel-backend.exe` 等）已写入 **`.gitignore`**。
+
 ---
 
 ## 功能要点
@@ -98,6 +122,7 @@ lores/               # 设定 Markdown（可按 .gitignore 决定是否入库）
 storage/             # 运行数据、摘要缓存、按小说分目录
 outputs/             # 正文归档
 cli.py               # 终端入口
+electron/            # Electron 壳（子进程 uvicorn + 窗口）
 mobile/              # Flet 客户端示例
 ```
 
